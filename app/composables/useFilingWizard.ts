@@ -3,12 +3,11 @@ import type { FilingSelection } from '../domain/types'
 import { balanceSheetTotals, profitAndLossTotals, parsePounds, formatPounds } from '../domain/accounting/totals'
 import { ratesFor, calculateCorporationTax } from '../domain/tax/corporationTax'
 import { calculateDeadlines } from '../domain/filing/deadlines'
-import { findProblems, findMissingAmountFields, MICRO_ENTITY_TURNOVER_LIMIT } from '../domain/validation/problems'
+import { findProblems, findMissingAmountFields, MICRO_ENTITY_TURNOVER_LIMIT, REQUIRED_AMOUNT_FIELDS } from '../domain/validation/problems'
 import { createAuditEntry, buildTaxableProfitTrail, type AuditEntry, type AuditCategory } from '../domain/audit/auditTrail'
 import { hashArtefacts, createApprovalRecord, isApprovalStale, type ApprovalRecord } from '../domain/filing/approval'
 import type { GatewayReceipt } from '../domain/filing/submissionStatus'
 import { buildIrMarkHashingBody, buildGovTalkEnvelope, parseGovTalkResponse, type CtMessageClass } from '../domain/filing/govTalk'
-import { buildAccountsBase64, buildCompaniesHouseAccountsEnvelope } from '../domain/filing/companiesHouseGovTalk'
 import { generateAccountsIxbrl } from '../domain/ixbrl/accountsIxbrl'
 import { generateTaxComputationIxbrl } from '../domain/ixbrl/taxComputationIxbrl'
 import { diffFields, createAmendment, type Amendment } from '../domain/filing/amendments'
@@ -71,9 +70,13 @@ function emptyFields() {
     // declaration
     approver: '', approvalDate: '', declName: '', declRole: '', gwUser: '', gwPass: '',
     // Companies House XML Gateway credentials (see
-    // app/domain/filing/companiesHouseGovTalk.ts) — kept in browser memory
-    // only, same as gwUser/gwPass above, never persisted server-side.
-    chPresenterId: '', chAuthCode: '', chCompanyAuthCode: '', chPackageRef: '', chEmail: ''
+    // app/domain/filing/companiesHouseGovTalk.ts) that legitimately belong
+    // in the browser: the Company Authentication Code is specific to the
+    // company being filed for, and the contact email isn't a secret. The
+    // Presenter ID, Presenter Authentication Code and Package Reference
+    // are TaxInANutshell's own credentials, not the filer's — those live
+    // server-side only (NUXT_COMPANIES_HOUSE_* env vars), never here.
+    chCompanyAuthCode: '', chEmail: ''
   })
 }
 
@@ -109,7 +112,6 @@ export function useFilingWizard() {
     // a <GatewayTest> flag rather than a different message Class the way
     // HMRC's testInLive above does — see companiesHouseGovTalk.ts.
     chGatewayTest: true,
-    chTransactionSeq: 1,
     hmrcReceipt: null as GatewayReceipt | null,
     chReceipt: null as GatewayReceipt | null,
     submitting: false,
@@ -151,6 +153,36 @@ export function useFilingWizard() {
   }
 
   const f = emptyFields()
+
+  /** requirements.md §3.1 — "Where possible, public company information
+   *  should be retrieved automatically from Companies House rather than
+   *  entered manually." Searches Companies House's public register by
+   *  name (server/api/companies-house/search.get.ts); does not touch `f`
+   *  itself, since the filer still needs to pick the right result. */
+  async function searchCompaniesHouse(query: string) {
+    if (!query.trim()) return []
+    const res = await $fetch<{ results: Array<{ companyNumber: string; companyName: string; status?: string; addressSnippet?: string }> }>(
+      '/api/companies-house/search',
+      { query: { q: query } }
+    )
+    return res.results
+  }
+
+  /** Looks up a single company by number and prefills what the public
+   *  record actually holds — name, registered office, primary SIC code.
+   *  The UTR is HMRC's identifier, not Companies House's, so it's never
+   *  part of this response and still has to be typed in. */
+  async function applyCompanyLookup(companyNumber: string) {
+    const res = await $fetch<{ companyName: string; companyNumber: string; address: string; postcode: string; sic: string }>(
+      `/api/companies-house/company/${encodeURIComponent(companyNumber)}`
+    )
+    f.companyName = res.companyName
+    f.companyNumber = res.companyNumber
+    if (res.address) f.address = res.address
+    if (res.postcode) f.postcode = res.postcode
+    if (res.sic) f.sic = res.sic
+    logEvent('mapping', `Prefilled company details from Companies House for company number ${res.companyNumber}.`)
+  }
 
   const order = computed<StepId[]>(() => {
     // requirements.md §25 — accounts and CT600 are tracked as independent
@@ -237,6 +269,45 @@ export function useFilingWizard() {
     if (errorSteps.value.has(step)) return 'error'
     if (warnSteps.value.has(step)) return 'warn'
     return order.value.indexOf(step) < currentIndex.value ? 'done' : 'upcoming'
+  }
+
+  /** Whether a step's own required inputs are filled in — used to gate the
+   *  step nav (a step whose prerequisites aren't done yet is greyed out
+   *  and unclickable, see app.vue), not to block the Continue/Back
+   *  buttons within the guided flow itself. */
+  function stepOwnFieldsFilled(step: StepId): boolean {
+    const amountFieldsFor = (s: string) =>
+      REQUIRED_AMOUNT_FIELDS.filter(x => x.step === s).every(x => String((f as Record<string, string>)[x.key] ?? '').trim())
+    switch (step) {
+      case 'start': return true
+      case 'company': return !!(f.companyName.trim() && f.companyNumber.trim() && f.utr.trim())
+      case 'period': return !!(f.periodStart && f.periodEnd)
+      case 'balance': return amountFieldsFor('balance')
+      case 'pnl': return amountFieldsFor('pnl')
+      case 'chSubmit': return true
+      case 'tax': return amountFieldsFor('tax')
+      case 'notes': return !!f.avgEmployees.trim()
+      case 'review': return true
+      case 'declaration': return true
+      // Only reachable once a submission actually exists (either just
+      // submitted, or restored from a bookmarked ?submission= URL).
+      case 'receipt': return !!state.submissionId
+    }
+  }
+
+  /** Every step up to and including the first one whose own fields aren't
+   *  filled in yet — everything after that stays locked in the nav. */
+  const unlockedSteps = computed(() => {
+    const unlocked = new Set<StepId>()
+    for (const step of order.value) {
+      unlocked.add(step)
+      if (!stepOwnFieldsFilled(step)) break
+    }
+    return unlocked
+  })
+
+  function isStepUnlocked(step: StepId): boolean {
+    return unlockedSteps.value.has(step)
   }
 
   const canSubmit = computed(() => problems.value.every(p => p.sev !== 'error') && state.declarationAgreed)
@@ -395,44 +466,26 @@ export function useFilingWizard() {
 
   /** Submits the accounts iXBRL to Companies House's real XML Gateway
    *  (see app/domain/filing/companiesHouseGovTalk.ts) — Class AA,
-   *  GatewayTest-flagged, MD5-hashed presenter authentication. Follows
-   *  the same shape as submitToHmrc: build a hashing/auth step server-side
-   *  (MD5 isn't available in Web Crypto), build the envelope in the
-   *  browser, hand it to a server route to actually reach the gateway. */
+   *  GatewayTest-flagged, MD5-hashed presenter authentication. Unlike
+   *  submitToHmrc, the envelope is built entirely server-side now: the
+   *  Presenter ID / Presenter Authentication Code / Package Reference are
+   *  TaxInANutshell's own credentials (server env vars), not the filer's,
+   *  so they never pass through the browser — only the Company
+   *  Authentication Code and contact email do. */
   async function submitToCompaniesHouse() {
     state.chSubmitting = true
     try {
-      const { senderIdHash, authValueHash } = await $fetch<{ senderIdHash: string; authValueHash: string }>('/api/companies-house/compute-auth', {
-        method: 'POST',
-        body: { presenterId: f.chPresenterId, presenterAuthCode: f.chAuthCode }
-      })
-
-      const transactionId = String(state.chTransactionSeq++)
-      const submissionNumber = crypto.randomUUID().replace(/-/g, '').slice(0, 20)
-
-      const envelopeXml = buildCompaniesHouseAccountsEnvelope({
-        credentials: {
-          presenterId: f.chPresenterId,
-          presenterAuthCode: f.chAuthCode,
-          companyAuthCode: f.chCompanyAuthCode,
-          packageReference: f.chPackageRef,
-          email: f.chEmail
-        },
-        gatewayTest: state.chGatewayTest,
-        companyNumber: f.companyNumber,
-        companyName: f.companyName,
-        transactionId,
-        submissionNumber,
-        accountsIxbrlBase64: buildAccountsBase64(accountsIxbrl.value),
-        senderIdHash, authValueHash
-      })
-
       const res = await $fetch<{ id: string }>('/api/companies-house/submit-accounts', {
         method: 'POST',
         body: {
           id: state.submissionId || undefined,
-          envelopeXml, companyName: f.companyName, periodEnd: f.periodEnd,
-          transactionId, submissionNumber
+          companyName: f.companyName,
+          companyNumber: f.companyNumber,
+          periodEnd: f.periodEnd,
+          companyAuthCode: f.chCompanyAuthCode,
+          email: f.chEmail,
+          gatewayTest: state.chGatewayTest,
+          accountsIxbrl: accountsIxbrl.value
         }
       })
 
@@ -462,6 +515,19 @@ export function useFilingWizard() {
     const res = await $fetch<{ row: SubmissionRowDto }>('/api/hmrc/poll-ct600', {
       method: 'POST',
       body: { id: state.submissionId, gatewayUserId: f.gwUser, gatewayPassword: f.gwPass }
+    })
+    applySubmissionRow(res.row)
+  }
+
+  /** Actively polls Companies House for a still-processing accounts
+   *  submission — unlike pollHmrcStatus, needs no credentials from the
+   *  browser: the presenter identity is TaxInANutshell's own, read
+   *  server-side from env vars (see poll-accounts.post.ts). */
+  async function pollCompaniesHouseStatus() {
+    if (!state.submissionId) return
+    const res = await $fetch<{ row: SubmissionRowDto }>('/api/companies-house/poll-accounts', {
+      method: 'POST',
+      body: { id: state.submissionId, email: f.chEmail, gatewayTest: state.chGatewayTest }
     })
     applySubmissionRow(res.row)
   }
@@ -503,7 +569,7 @@ export function useFilingWizard() {
 
   return {
     state, f,
-    order, currentIndex, go, move, stepStatus,
+    order, currentIndex, go, move, stepStatus, isStepUnlocked,
     STEP_LABELS,
     balance, pnl, taxableTotalProfits, rates, corporationTax, deadlines,
     problems, errorSteps, warnSteps, canSubmit,
@@ -514,7 +580,8 @@ export function useFilingWizard() {
     approveFiling, checkApprovalStale,
     accountsIxbrl, taxComputationIxbrl,
     submitToHmrc, submitToCompaniesHouse,
-    refreshSubmissionStatus, pollHmrcStatus,
-    createAmendmentFromReceipt
+    refreshSubmissionStatus, pollHmrcStatus, pollCompaniesHouseStatus,
+    createAmendmentFromReceipt,
+    searchCompaniesHouse, applyCompanyLookup
   }
 }

@@ -28,8 +28,8 @@ export default defineEventHandler(async (event) => {
 
   const config = useRuntimeConfig()
   const id = crypto.randomUUID()
-  createSubmission({ id, companyName: body.companyName ?? '', periodEnd: body.periodEnd ?? '' })
-  updateSubmission(id, {
+  await createSubmission({ id, companyName: body.companyName ?? '', periodEnd: body.periodEnd ?? '' })
+  await updateSubmission(id, {
     hmrc_message_class: body.messageClass,
     hmrc_irmark: body.irMark,
     hmrc_payload_hash: body.payloadHash,
@@ -46,7 +46,7 @@ export default defineEventHandler(async (event) => {
     const parsed = parseGovTalkResponse(text)
 
     if (parsed.qualifier === 'acknowledgement') {
-      updateSubmission(id, {
+      await updateSubmission(id, {
         hmrc_status: 'submitted',
         hmrc_correlation_id: parsed.correlationId,
         hmrc_poll_endpoint: parsed.pollEndpoint ?? null,
@@ -55,19 +55,19 @@ export default defineEventHandler(async (event) => {
         hmrc_message: 'HMRC acknowledged the submission and is processing it. Poll for the final result.'
       })
     } else if (parsed.qualifier === 'error') {
-      updateSubmission(id, {
+      await updateSubmission(id, {
         hmrc_status: 'rejected',
         hmrc_raw_response: text,
         hmrc_message: parsed.errors.map(e => e.text).join('; ')
       })
     } else if (parsed.qualifier === 'response') {
-      updateSubmission(id, {
+      await updateSubmission(id, {
         hmrc_status: 'accepted',
         hmrc_raw_response: text,
         hmrc_message: 'HMRC returned an immediate response.'
       })
     } else {
-      updateSubmission(id, {
+      await updateSubmission(id, {
         hmrc_status: response.ok ? 'submitted' : 'rejected',
         hmrc_raw_response: text,
         hmrc_message: `Unrecognised GovTalk response (HTTP ${response.status}) — could not determine qualifier.`
@@ -76,7 +76,7 @@ export default defineEventHandler(async (event) => {
 
     return { id }
   } catch (err) {
-    updateSubmission(id, { hmrc_status: 'rejected', hmrc_message: `Could not reach HMRC gateway: ${(err as Error).message}` })
+    await updateSubmission(id, { hmrc_status: 'rejected', hmrc_message: `Could not reach HMRC gateway: ${(err as Error).message}` })
     return { id }
   }
 })

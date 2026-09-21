@@ -11,8 +11,12 @@
 //    the Presenter_ID and Presenter Authentication Code (a credit-account
 //    credential CH issues to the presenter/software) — not sent in clear,
 //    unlike HMRC's GovTalk auth. MD5 isn't available via the browser's
-//    Web Crypto SubtleCrypto, so it's computed server-side (see
-//    server/api/companies-house/compute-auth.post.ts).
+//    Web Crypto SubtleCrypto anyway, but more fundamentally these two
+//    values are TaxInANutshell's own Software Filing credentials (like
+//    OAuth client credentials, not the filer's) — they live in server
+//    env vars and are hashed server-side, never sent to the browser at
+//    all (see server/api/companies-house/submit-accounts.post.ts and
+//    poll-accounts.post.ts).
 //  - <TransactionID> (envelope-level, presenter-assigned, must strictly
 //    increase across a session) is distinct from <SubmissionNumber>
 //    (inside <FormSubmission>, presenter-assigned, must never repeat —
@@ -51,21 +55,17 @@
 // envelope in govTalk.ts.
 
 export interface CompaniesHouseCredentials {
-  /** 11-character Presenter_ID, issued by Companies House on registering
-   *  for the Software Filing (XML Gateway) service. Hashed (MD5) server
-   *  side into the SenderID — never sent in clear. */
-  presenterId: string
-  /** Presenter Authentication Code, issued alongside the Presenter_ID.
-   *  Hashed (MD5) server-side into the Authentication <Value> — never
-   *  sent in clear. */
-  presenterAuthCode: string
   /** Company Authentication Code — proves authority to file for this
    *  specific company, issued by Companies House to the company (visible
-   *  on the CH public register cover letter / WebFiling account). */
+   *  on the CH public register cover letter / WebFiling account). This is
+   *  the one credential here that legitimately comes from the browser —
+   *  it's the filer's, not TaxInANutshell's. */
   companyAuthCode: string
   /** Package/software reference, issued once a developer completes CH's
    *  authorisation testing. "Any PackageReference... can be used" against
-   *  the test service. */
+   *  the test service. This is TaxInANutshell's own, read server-side
+   *  from NUXT_COMPANIES_HOUSE_PACKAGE_REFERENCE — see
+   *  server/api/companies-house/submit-accounts.post.ts. */
   packageReference: string
   email: string
 }
@@ -79,8 +79,9 @@ export interface CompaniesHouseAccountsSubmissionInput {
   submissionNumber: string
   /** Base64-encoded accounts iXBRL — see buildAccountsBase64 below. */
   accountsIxbrlBase64: string
-  /** MD5(presenterId) and MD5(presenterAuthCode), lowercase hex — computed
-   *  server-side (see compute-auth.post.ts) since Web Crypto has no MD5. */
+  /** MD5(presenterId) and MD5(presenterAuthCode), lowercase hex — both
+   *  computed server-side from env-var credentials that never reach this
+   *  module's caller (see submit-accounts.post.ts / poll-accounts.post.ts). */
   senderIdHash: string
   authValueHash: string
 }
@@ -146,6 +147,63 @@ export function buildCompaniesHouseAccountsEnvelope(input: CompaniesHouseAccount
 `
 }
 
+export interface CompaniesHouseStatusPollInput {
+  credentials: Pick<CompaniesHouseCredentials, 'email'>
+  gatewayTest: boolean
+  transactionId: string
+  submissionNumber: string
+  senderIdHash: string
+  authValueHash: string
+}
+
+/** Polls for the status of a previously submitted accounts document —
+ *  TIS v5.3 §2.5, "option 1": identify the transaction by Presenter_ID
+ *  (implicit in SenderID/Authentication) + <SubmissionNumber>, get back
+ *  its current status (accepted/rejected/pending/parked) synchronously,
+ *  no separate GetStatusAck needed for this specific-submission option.
+ *
+ *  CAVEAT: same as the FormSubmission body above — TIS v5.3 documents
+ *  that GetSubmissionStatus takes a Presenter_ID and SubmissionNumber and
+ *  returns status/Reject_message, but not the literal element nesting.
+ *  The <GetSubmissionStatus><SubmissionNumber> shape below is a
+ *  best-effort structure from that prose, not confirmed against the
+ *  actual schema — verify before live use. */
+export function buildCompaniesHouseStatusPollEnvelope(input: CompaniesHouseStatusPollInput): string {
+  const timestamp = new Date().toISOString()
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<GovTalkMessage xmlns="http://www.govtalk.gov.uk/CM/envelope">
+  <EnvelopeVersion>1.0</EnvelopeVersion>
+  <Header>
+    <MessageDetails>
+      <Class>GetSubmissionStatus</Class>
+      <Qualifier>request</Qualifier>
+      <TransactionID>${esc(input.transactionId)}</TransactionID>
+      <GatewayTest>${input.gatewayTest ? 'true' : 'false'}</GatewayTest>
+    </MessageDetails>
+    <SenderDetails>
+      <IDAuthentication>
+        <SenderID>${esc(input.senderIdHash)}</SenderID>
+        <Authentication>
+          <Method>clear</Method>
+          <Value>${esc(input.authValueHash)}</Value>
+        </Authentication>
+      </IDAuthentication>
+      <EmailAddress>${esc(input.credentials.email)}</EmailAddress>
+    </SenderDetails>
+  </Header>
+  <GovTalkDetails>
+    <Keys />
+  </GovTalkDetails>
+  <Body>
+    <GetSubmissionStatus>
+      <SubmissionNumber>${esc(input.submissionNumber)}</SubmissionNumber>
+    </GetSubmissionStatus>
+  </Body>
+</GovTalkMessage>
+<!-- generated ${esc(timestamp)}; GetSubmissionStatus body shape is a best-effort structural draft — verify against the real schema before live use -->
+`
+}
+
 export interface ChGovTalkErrorDetail {
   number?: string
   text: string
@@ -197,4 +255,27 @@ export function parseCompaniesHouseResponse(xml: string): ChGovTalkParsedRespons
   }
 
   return { qualifier: 'unknown', raw: xml }
+}
+
+export interface ChStatusPollResult {
+  submissionNumber?: string
+  /** TIS v5.3 §2.5: "a) accepted, b) rejected..., c) pending..., or
+   *  d) parked...". Left as the raw CH term rather than mapped onto this
+   *  app's SubmissionStatus union here — the caller (the poll server
+   *  route) does that mapping, same division of responsibility as
+   *  parseGovTalkResponse/submit-ct600.post.ts for HMRC. */
+  status?: string
+  rejectMessage?: string
+}
+
+/** Parses a GetSubmissionStatus poll response — distinct from
+ *  parseCompaniesHouseResponse above because the poll reply's interesting
+ *  content (status/Reject_message) sits inside the response body rather
+ *  than at the envelope-error level. */
+export function parseCompaniesHouseStatusPollResponse(xml: string): ChStatusPollResult {
+  return {
+    submissionNumber: extractTag(xml, 'SubmissionNumber'),
+    status: extractTag(xml, 'status') ?? extractTag(xml, 'Status'),
+    rejectMessage: extractTag(xml, 'Reject_message')
+  }
 }

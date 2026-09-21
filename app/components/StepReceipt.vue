@@ -33,6 +33,16 @@ async function checkForUpdates() {
   }
 }
 
+const chPolling = ref(false)
+async function checkForChUpdates() {
+  chPolling.value = true
+  try {
+    await props.wizard.pollCompaniesHouseStatus()
+  } finally {
+    chPolling.value = false
+  }
+}
+
 function downloadReceipt() {
   download(`${f.companyName || 'filing'}-receipt.json`, JSON.stringify({
     company: { name: f.companyName, number: f.companyNumber, utr: f.utr },
@@ -117,7 +127,24 @@ async function onReceiptFilePicked(event: Event) {
   <p v-else class="text-muted">No Company Tax Return was included in this filing.</p>
 
   <h4>Companies House</h4>
-  <p v-if="state.chReceipt" class="text-muted">{{ state.chReceipt.message }}</p>
+  <template v-if="state.chReceipt">
+    <p>
+      <span class="tag" :class="state.chReceipt.status === 'rejected' ? 'tag-accent-2' : 'tag-accent'">
+        {{ SUBMISSION_STATUS_LABELS[state.chReceipt.status] }}
+      </span>
+      {{ state.chReceipt.message }}
+    </p>
+
+    <template v-if="state.chReceipt.status === 'submitted'">
+      <p class="text-muted" style="font-size: 13px;">
+        Companies House hasn't given a final accept/reject yet. Reloading this page (it's bookmarkable) re-checks the
+        status that's on record; use the button below to actively ask Companies House for an update.
+      </p>
+      <button type="button" class="btn btn-secondary" :disabled="chPolling" @click="checkForChUpdates">
+        <AppIcon v-if="chPolling" name="spinner" :size="14" />{{ chPolling ? 'Checking…' : 'Check for updates' }}
+      </button>
+    </template>
+  </template>
   <p v-else class="text-muted">No accounts were included in this filing.</p>
 
   <h4 style="margin-top: var(--space-6);">Downloads</h4>

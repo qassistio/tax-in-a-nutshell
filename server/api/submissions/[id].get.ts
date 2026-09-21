@@ -6,10 +6,10 @@
 
 import { getSubmission } from '../../utils/db'
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'Missing id' })
-  const row = getSubmission(id)
+  const row = await getSubmission(id)
   if (!row) throw createError({ statusCode: 404, statusMessage: 'Unknown submission' })
   return { row }
 })

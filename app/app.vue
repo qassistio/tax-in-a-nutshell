@@ -58,10 +58,17 @@ watch(() => state.submissionId, (id) => {
 <template>
   <header class="masthead">
     <div class="masthead-row">
-      <h1>TaxInANutshell</h1>
-      <span class="masthead-byline">A QAssist product</span>
+      <div class="masthead-title">
+        <img class="masthead-logo" src="/assets/icons/favicon.svg" alt="" width="32" height="32">
+        <h1>TaxInANutshell</h1>
+      </div>
+      <a class="masthead-byline" href="https://qassist.io" target="_blank" rel="noopener noreferrer">A QAssist product</a>
     </div>
     <div class="masthead-rule" />
+    <p class="masthead-tagline">
+      File your Company Tax Return and micro-entity accounts straight to HMRC and Companies House — free, no
+      accountant or filing software to buy, done in your browser in one sitting.
+    </p>
   </header>
 
   <div class="wizard">
@@ -71,7 +78,9 @@ watch(() => state.submissionId, (id) => {
         :key="step"
         type="button"
         class="wizard-nav-item"
-        :class="{ 'is-current': step === state.step }"
+        :class="{ 'is-current': step === state.step, 'is-locked': !wizard.isStepUnlocked(step) }"
+        :disabled="!wizard.isStepUnlocked(step)"
+        :aria-disabled="!wizard.isStepUnlocked(step)"
         @click="wizard.go(step)"
       >
         <span
@@ -96,7 +105,10 @@ watch(() => state.submissionId, (id) => {
   </div>
 
   <footer class="site-footer">
-    <span>TaxInANutshell — a QAssist product</span>
+    <span>
+      TaxInANutshell —
+      <a class="footer-link" href="https://qassist.io" target="_blank" rel="noopener noreferrer">a QAssist product</a>
+    </span>
     <span>HMRC-recognised for CT600 and FRS 105 accounts</span>
     <span class="site-footer-right">No cookies. No analytics. Only a submission status ID is stored server-side.</span>
   </footer>
