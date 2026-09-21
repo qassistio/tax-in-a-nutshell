@@ -79,9 +79,20 @@ const { f, pnl, taxableTotalProfits, corporationTax, capitalAllowances, lossReli
   </div>
 
   <div class="card elev-sm" style="margin-top: var(--space-4);">
-    <div class="card-kicker">{{ corporationTax.rates.version }} rates</div>
-    <div class="card-title">Corporation Tax due: £{{ formatPounds(corporationTax.corporationTax) }}</div>
-    <p class="card-body">{{ corporationTax.rateNote }}</p>
+    <template v-if="corporationTax.segments">
+      <div class="card-kicker">Period spans a tax rate change</div>
+      <div class="card-title">Corporation Tax due: £{{ formatPounds(corporationTax.corporationTax) }}</div>
+      <p class="card-body">This period crosses 1 April into a year with a different tax rate, so profit is split between the two years below. Check these figures before filing.</p>
+      <div v-for="seg in corporationTax.segments" :key="seg.fyStartYear" class="amount-row">
+        <label>{{ seg.rates.version }} ({{ seg.days }} days) — £{{ formatPounds(seg.profit) }} of profit</label>
+        <span class="num">£{{ formatPounds(seg.tax) }}</span>
+      </div>
+    </template>
+    <template v-else>
+      <div class="card-kicker">{{ corporationTax.rates.version }} rates</div>
+      <div class="card-title">Corporation Tax due: £{{ formatPounds(corporationTax.corporationTax) }}</div>
+      <p class="card-body">{{ corporationTax.rateNote }}</p>
+    </template>
   </div>
 
   <h3 style="margin-top: var(--space-4);">Director's loan account</h3>

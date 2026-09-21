@@ -1,7 +1,8 @@
 import { computed, reactive } from 'vue'
 import type { FilingSelection } from '../domain/types'
 import { balanceSheetTotals, profitAndLossTotals, parsePounds, formatPounds } from '../domain/accounting/totals'
-import { ratesFor, calculateCorporationTax } from '../domain/tax/corporationTax'
+import { ratesFor, calculateCorporationTaxForPeriod, periodSpansDifferingFinancialYearRates } from '../domain/tax/corporationTax'
+import { isLongAccountingPeriod } from '../domain/tax/longPeriodSplit'
 import { capitalAllowanceRatesFor, calculateCapitalAllowances } from '../domain/tax/capitalAllowances'
 import { applyLossRelief } from '../domain/tax/losses'
 import { directorLoanRatesFor, assessDirectorLoan } from '../domain/tax/directorLoans'
@@ -15,7 +16,7 @@ import type { GatewayReceipt } from '../domain/filing/submissionStatus'
 import { buildIrMarkHashingBody, parseGovTalkResponse } from '../domain/filing/govTalk'
 import { generateAccountsIxbrl } from '../domain/ixbrl/accountsIxbrl'
 import { generateTaxComputationIxbrl } from '../domain/ixbrl/taxComputationIxbrl'
-import { buildCt600Xml } from '../domain/filing/ct600'
+import { buildCt600Xml, validateCt600XmlShape } from '../domain/filing/ct600'
 import { diffFields, createAmendment, type Amendment } from '../domain/filing/amendments'
 import { translateGovTalkErrors, type TranslatedError } from '../domain/filing/rejectionMessages'
 
@@ -61,9 +62,9 @@ const STEP_LABELS: Record<StepId, string> = {
 function emptyFields() {
   return reactive({
     // eligibility (requirements.md §3.2/§34) — 'yes' | 'no' | ''
-    eligAudited: '', eligGroup: '', eligOverseas: '', eligSpecialistRelief: '',
+    eligAudited: '', eligGroup: '', eligOverseas: '', eligSpecialistRelief: '', eligChargeableGains: '',
     // company
-    companyName: '', companyNumber: '', utr: '', address: '', postcode: '', sic: '',
+    companyName: '', companyNumber: '', utr: '', address: '', postcode: '', sic: '', incorporationDate: '',
     // accounting period
     periodStart: '', periodEnd: '', firstPeriod: '',
     // balance sheet
@@ -193,7 +194,7 @@ export function useFilingWizard() {
    *  The UTR is HMRC's identifier, not Companies House's, so it's never
    *  part of this response and still has to be typed in. */
   async function applyCompanyLookup(companyNumber: string) {
-    const res = await $fetch<{ companyName: string; companyNumber: string; address: string; postcode: string; sic: string }>(
+    const res = await $fetch<{ companyName: string; companyNumber: string; address: string; postcode: string; sic: string; incorporationDate?: string }>(
       `/api/companies-house/company/${encodeURIComponent(companyNumber)}`
     )
     f.companyName = res.companyName
@@ -201,6 +202,7 @@ export function useFilingWizard() {
     if (res.address) f.address = res.address
     if (res.postcode) f.postcode = res.postcode
     if (res.sic) f.sic = res.sic
+    if (res.incorporationDate) f.incorporationDate = res.incorporationDate
     logEvent('mapping', `Prefilled company details from Companies House for company number ${res.companyNumber}.`)
   }
 
@@ -281,7 +283,7 @@ export function useFilingWizard() {
 
   // --- Eligibility (requirements.md §3.2/§34) ---
   const eligibilityAnswers = computed<EligibilityAnswers>(() => ({
-    audited: f.eligAudited, group: f.eligGroup, overseas: f.eligOverseas, specialistRelief: f.eligSpecialistRelief
+    audited: f.eligAudited, group: f.eligGroup, overseas: f.eligOverseas, specialistRelief: f.eligSpecialistRelief, chargeableGains: f.eligChargeableGains
   }))
 
   // --- Capital allowances (requirements.md §12) — AIA then main-pool WDA
@@ -309,9 +311,17 @@ export function useFilingWizard() {
 
   const rates = computed(() => ratesFor(f.periodEnd || new Date()))
 
-  const corporationTax = computed(() =>
-    calculateCorporationTax(taxableTotalProfits.value, parsePounds(f.associated), rates.value)
-  )
+  // Handles a period straddling 1 April (requirements.md §13) — falls back
+  // to a single-rate calculation whenever the period sits in one Financial
+  // Year, or spans two with identical rates (every real case so far).
+  // periodStart/periodEnd default the same way `rates` above does, so an
+  // in-progress wizard (dates not filled in yet) doesn't hit an invalid date.
+  const corporationTax = computed(() => {
+    const todayIso = new Date().toISOString().slice(0, 10)
+    const periodEnd = f.periodEnd || todayIso
+    const periodStart = f.periodStart || periodEnd
+    return calculateCorporationTaxForPeriod(taxableTotalProfits.value, parsePounds(f.associated), { periodStart, periodEnd })
+  })
 
   // --- Director loans / Section 455 / CT600A (requirements.md §15/§17) ---
   const directorLoanRates = computed(() => directorLoanRatesFor(f.periodEnd || new Date()))
@@ -323,7 +333,10 @@ export function useFilingWizard() {
   /** Corporation Tax plus any Section 455 charge — total due to HMRC. */
   const totalTaxPayable = computed(() => corporationTax.value.corporationTax + directorLoanAssessment.value.s455Due)
 
-  const deadlines = computed(() => calculateDeadlines(f.periodStart, f.periodEnd))
+  const deadlines = computed(() => calculateDeadlines(f.periodStart, f.periodEnd, {
+    firstPeriod: f.firstPeriod === 'yes',
+    incorporationDate: f.incorporationDate
+  }))
 
   const problems = computed(() => {
     const applicableSteps = new Set([
@@ -343,8 +356,18 @@ export function useFilingWizard() {
         accountsDepreciation: parsePounds(f.depreciation),
         microEntityTurnoverLimit: MICRO_ENTITY_TURNOVER_LIMIT,
         directorLoanBalance: parsePounds(f.directorLoanBalance),
-        directorLoanRepaidAnswered: !!f.directorLoanRepaidBeforeDue
-      })
+        directorLoanRepaidAnswered: !!f.directorLoanRepaidBeforeDue,
+        periodSpansDifferingRates: periodSpansDifferingFinancialYearRates(f.periodStart, f.periodEnd),
+        periodExceeds12Months: isLongAccountingPeriod(f.periodStart, f.periodEnd)
+      }),
+      // Structural check on the CT600 XML, only once a CT600 is being filed.
+      ...(state.filings.ct600 ? validateCt600XmlShape(ct600Xml.value).map((detail, i) => ({
+        id: `ct600-shape-${i}`,
+        sev: 'error' as const,
+        step: 'tax',
+        title: 'There’s a problem with the tax return document',
+        detail
+      })) : [])
     ]
   })
 
@@ -372,7 +395,7 @@ export function useFilingWizard() {
       case 'start': return true
       // "Filled" means answered, not passing — an eligibility failure still
       // shows as an error on review but doesn't block moving on.
-      case 'eligibility': return !!(f.eligAudited && f.eligGroup && f.eligOverseas && f.eligSpecialistRelief)
+      case 'eligibility': return !!(f.eligAudited && f.eligGroup && f.eligOverseas && f.eligSpecialistRelief && f.eligChargeableGains)
       case 'company': return !!(f.companyName.trim() && f.companyNumber.trim() && f.utr.trim())
       case 'period': return !!(f.periodStart && f.periodEnd)
       case 'balance': return amountFieldsFor('balance')
@@ -512,7 +535,7 @@ export function useFilingWizard() {
   // attaching) the iXBRL accounts and tax computation above.
   const ct600Xml = computed(() => buildCt600Xml({
     company: company.value, period: period.value,
-    turnover: pnl.value.turnover,
+    turnover: parsePounds(f.turnover),
     tradingProfit: tradingResultAfterCapitalAllowances.value,
     lossesRelieved: lossRelief.value.reliefUsed,
     result: corporationTax.value,

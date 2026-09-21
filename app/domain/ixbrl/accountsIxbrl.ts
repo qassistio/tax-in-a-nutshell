@@ -179,6 +179,7 @@ export function generateAccountsIxbrl(input: AccountsIxbrlInput): string {
   <h1>${esc(company.companyName)}</h1>
   <p>Company number ${esc(company.companyNumber)} — micro-entity accounts prepared under FRS 105
      for the period ${esc(period.periodStart)} to ${esc(period.periodEnd)}.</p>
+  <p>Registered office: ${esc(company.address)}, ${esc(company.postcode)}.</p>
 
   <h2>Balance sheet as at ${esc(period.periodEnd)}</h2>
   <table>

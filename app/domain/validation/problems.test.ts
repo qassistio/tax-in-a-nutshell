@@ -22,7 +22,9 @@ const balancedInputs = (): ProblemInputs => ({
   accountsDepreciation: 500,
   microEntityTurnoverLimit: MICRO_ENTITY_TURNOVER_LIMIT,
   directorLoanBalance: 0,
-  directorLoanRepaidAnswered: false
+  directorLoanRepaidAnswered: false,
+  periodSpansDifferingRates: false,
+  periodExceeds12Months: false
 })
 
 describe('findProblems', () => {
@@ -73,6 +75,16 @@ describe('findProblems', () => {
   it('does not flag a director loan once its repayment status is answered', () => {
     const problems = findProblems({ ...balancedInputs(), directorLoanBalance: 5_000, directorLoanRepaidAnswered: true })
     expect(problems.find(p => p.id === 'director-loan-repaid-unanswered')).toBeUndefined()
+  })
+
+  it('warns when the accounting period spans a Corporation Tax rate change', () => {
+    const problems = findProblems({ ...balancedInputs(), periodSpansDifferingRates: true })
+    expect(problems.find(p => p.id === 'period-spans-rate-change')).toMatchObject({ sev: 'warn', step: 'tax' })
+  })
+
+  it('blocks filing when the accounting period exceeds 12 months', () => {
+    const problems = findProblems({ ...balancedInputs(), periodExceeds12Months: true })
+    expect(problems.find(p => p.id === 'period-exceeds-12-months')).toMatchObject({ sev: 'error', step: 'tax' })
   })
 })
 

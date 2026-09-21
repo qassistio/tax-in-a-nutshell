@@ -98,10 +98,6 @@ async function lookup(companyNumber: string) {
       <input id="utr" v-model="f.utr" class="input" placeholder="10 digits">
     </div>
     <div class="field">
-      <label for="sic">SIC code</label>
-      <input id="sic" v-model="f.sic" class="input" placeholder="62020">
-    </div>
-    <div class="field">
       <label for="address">Registered office address</label>
       <input id="address" v-model="f.address" class="input">
     </div>
@@ -109,10 +105,18 @@ async function lookup(companyNumber: string) {
       <label for="postcode">Postcode</label>
       <input id="postcode" v-model="f.postcode" class="input">
     </div>
+    <div class="field">
+      <label for="incorporationDate">Date of incorporation</label>
+      <input id="incorporationDate" v-model="f.incorporationDate" class="input" type="date">
+    </div>
   </div>
   <p class="text-muted" style="font-size: 13px; margin-top: var(--space-2);">
     Search or look-up pulls from Companies House's public register — the Unique Taxpayer Reference isn't public
     data, so that still needs entering by hand.
+  </p>
+  <p class="text-muted" style="font-size: 13px;">
+    Date of incorporation is used to work out the filing deadline for a company's first accounts, which follows
+    different rules to later years.
   </p>
 
   <div class="step-footer">

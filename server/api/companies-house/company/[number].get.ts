@@ -30,6 +30,7 @@ export default defineEventHandler(async (event) => {
     company_name: string
     company_number: string
     sic_codes?: string[]
+    date_of_creation?: string
     registered_office_address?: {
       address_line_1?: string
       address_line_2?: string
@@ -47,6 +48,11 @@ export default defineEventHandler(async (event) => {
     companyNumber: data.company_number,
     address: addressLines.join(', '),
     postcode: addr.postal_code ?? '',
-    sic: data.sic_codes?.[0] ?? ''
+    sic: data.sic_codes?.[0] ?? '',
+    // Companies House's incorporation date — needed to compute the first
+    // accounts filing deadline (later of 21 months from incorporation, or
+    // 3 months from period end; requirements.md §27), which differs from
+    // the standard "9 months after period end" rule used thereafter.
+    incorporationDate: data.date_of_creation ?? ''
   }
 })

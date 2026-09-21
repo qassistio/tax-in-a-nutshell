@@ -5,8 +5,8 @@ import { ELIGIBILITY_CHECKS, type EligibilityAnswers } from '../domain/eligibili
 const props = defineProps<{ wizard: ReturnType<typeof useFilingWizard> }>()
 const { f } = props.wizard
 
-const FIELD_BY_KEY: Record<keyof EligibilityAnswers, 'eligAudited' | 'eligGroup' | 'eligOverseas' | 'eligSpecialistRelief'> = {
-  audited: 'eligAudited', group: 'eligGroup', overseas: 'eligOverseas', specialistRelief: 'eligSpecialistRelief'
+const FIELD_BY_KEY: Record<keyof EligibilityAnswers, 'eligAudited' | 'eligGroup' | 'eligOverseas' | 'eligSpecialistRelief' | 'eligChargeableGains'> = {
+  audited: 'eligAudited', group: 'eligGroup', overseas: 'eligOverseas', specialistRelief: 'eligSpecialistRelief', chargeableGains: 'eligChargeableGains'
 }
 </script>
 

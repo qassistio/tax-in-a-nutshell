@@ -62,6 +62,10 @@ function lastDayOfMonth(month: string): string {
       Corporation Tax payment due: <strong>{{ deadlines.corporationTaxPaymentDue?.toLocaleDateString('en-GB') }}</strong><br>
       Company Tax Return (CT600) due: <strong>{{ deadlines.ct600Due?.toLocaleDateString('en-GB') }}</strong>
     </p>
+    <p v-if="deadlines.secondCorporationTaxPeriod" class="card-body" style="color: var(--color-accent-2);">
+      This period is longer than 12 months, so HMRC needs two separate Corporation Tax returns for it.
+      This tool doesn't support that — see the tax step for details.
+    </p>
   </div>
 
   <div class="step-footer">

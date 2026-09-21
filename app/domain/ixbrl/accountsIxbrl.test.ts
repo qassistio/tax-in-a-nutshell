@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { generateAccountsIxbrl } from './accountsIxbrl'
 import type { CompanyDetails, AccountingPeriod, BalanceSheetFigures, ProfitAndLossFigures } from '../types'
 
-const company: CompanyDetails = { companyName: 'Test Ltd', companyNumber: '12345678', utr: '1234567890' } as CompanyDetails
+const company: CompanyDetails = {
+  companyName: 'Test Ltd', companyNumber: '12345678', utr: '1234567890', address: '1 Test St', postcode: 'AB1 2CD'
+} as CompanyDetails
 const period: AccountingPeriod = { periodStart: '2025-01-01', periodEnd: '2025-12-31' }
 const balance: BalanceSheetFigures = {
   unpaidCapital: 0, fixedAssets: 1000, currentAssets: 2000, prepayments: 0,

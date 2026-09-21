@@ -14,9 +14,11 @@
 // CAVEAT: same as govTalk.ts — checked against HMRC's published examples
 // and guide as of 2026-09-21, not validated against the live gateway or
 // the full CT600 XSD. In particular:
-//  - Only a single <FinancialYearOne> is populated — an accounting period
-//    straddling 1 April (two Financial Years, requirements.md §13) isn't
-//    handled, matching the rest of the tax engine's current scope.
+//  - A period straddling 1 April into a Financial Year with different
+//    rates emits a second <FinancialYearTwo> block alongside
+//    <FinancialYearOne> (see corporationTax.ts's calculateCorporationTaxForPeriod).
+//    None of the 3 HMRC sample files are themselves a straddling example,
+//    so this shape is plausible but unconfirmed — verify before relying on it live.
 //  - The CT600A <Supplementary> block's element names are a best-effort
 //    structural draft (no HMRC-published sample with CT600A was found) —
 //    verify against the real schema before relying on it.
@@ -94,6 +96,21 @@ export function buildCt600Xml(input: Ct600Input): string {
   const s455Due = directorLoan?.s455Due ?? 0
   const taxPayable = result.corporationTax + s455Due
 
+  // A straddling period (result.segments set — see calculateCorporationTaxForPeriod)
+  // gets one <Details> block per Financial Year; otherwise a single block
+  // covering the whole period, as before.
+  const financialYearBlocks = (result.segments ?? [{ fyStartYear: fyYear, profit: result.taxableTotalProfits, tax: result.corporationTax }])
+    .map((seg, i) => `
+      <FinancialYear${i === 0 ? 'One' : 'Two'}>
+        <Year>${seg.fyStartYear}</Year>
+        <Details>
+          <Profit>${money(seg.profit)}</Profit>
+          <TaxRate>${(seg.tax / seg.profit * 100 || 0).toFixed(2)}</TaxRate>
+          <Tax>${money(seg.tax)}</Tax>
+        </Details>
+      </FinancialYear${i === 0 ? 'One' : 'Two'}>`)
+    .join('')
+
   return `<CompanyTaxReturn ReturnType="${esc(input.returnType ?? 'new')}">
   <CompanyInformation>
     <CompanyName>${esc(company.companyName)}</CompanyName>
@@ -129,15 +146,7 @@ export function buildCt600Xml(input: Ct600Input): string {
       <ProfitsBeforeDonationsAndGroupRelief>${money(netTradingProfit)}</ProfitsBeforeDonationsAndGroupRelief>
     </ChargesAndReliefs>
     <ChargeableProfits>${money(result.taxableTotalProfits)}</ChargeableProfits>
-    <CorporationTaxChargeable>
-      <FinancialYearOne>
-        <Year>${fyYear}</Year>
-        <Details>
-          <Profit>${money(result.taxableTotalProfits)}</Profit>
-          <TaxRate>${(result.effectiveRate * 100).toFixed(2)}</TaxRate>
-          <Tax>${money(result.corporationTax)}</Tax>
-        </Details>
-      </FinancialYearOne>
+    <CorporationTaxChargeable>${financialYearBlocks}
     </CorporationTaxChargeable>
     <CorporationTax>${money(result.corporationTax)}</CorporationTax>
     <NetCorporationTaxChargeable>${money(result.corporationTax)}</NetCorporationTaxChargeable>
@@ -185,4 +194,31 @@ export function buildCt600Xml(input: Ct600Input): string {
     </XBRLsubmission>
   </AttachedFiles>
 </CompanyTaxReturn>`
+}
+
+/** A lightweight pre-submission structural check on the CT600 XML — not a
+ *  real HMRC XSD validation, just a check for missing required elements
+ *  and unbalanced tags, so an obviously broken document is caught before
+ *  it reaches HMRC's gateway. Regex-based rather than a real XML parser,
+ *  so it runs the same in the browser and under Node/vitest. */
+const REQUIRED_CT600_ELEMENTS = [
+  'CompanyInformation', 'RegistrationNumber', 'Reference', 'CompanyType', 'PeriodCovered',
+  'Turnover', 'CompanyTaxCalculation', 'ChargeableProfits', 'CorporationTaxChargeable',
+  'CorporationTax', 'Declaration', 'AttachedFiles'
+]
+
+export function validateCt600XmlShape(xml: string): string[] {
+  const problems: string[] = []
+  for (const el of REQUIRED_CT600_ELEMENTS) {
+    if (!xml.includes(`<${el}>`) && !xml.includes(`<${el} `)) {
+      problems.push(`Missing required <${el}> element.`)
+    }
+  }
+  const opens = xml.match(/<[A-Za-z][\w.-]*(?:\s[^>]*)?>/g)?.length ?? 0
+  const selfClosing = xml.match(/<[A-Za-z][\w.-]*(?:\s[^>]*)?\/>/g)?.length ?? 0
+  const closes = xml.match(/<\/[A-Za-z][\w.-]*>/g)?.length ?? 0
+  if (opens - selfClosing !== closes) {
+    problems.push('XML tags do not balance — the document may be malformed.')
+  }
+  return problems
 }

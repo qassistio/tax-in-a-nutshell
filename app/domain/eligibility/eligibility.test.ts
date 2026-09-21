@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { findEligibilityProblems, isEligible, type EligibilityAnswers } from './eligibility'
 
-const ALL_CLEAR: EligibilityAnswers = { audited: 'no', group: 'no', overseas: 'no', specialistRelief: 'no' }
+const ALL_CLEAR: EligibilityAnswers = { audited: 'no', group: 'no', overseas: 'no', specialistRelief: 'no', chargeableGains: 'no' }
 
 describe('eligibility', () => {
   it('is eligible when every question is answered no', () => {
@@ -23,7 +23,13 @@ describe('eligibility', () => {
   })
 
   it('reports every failing question at once', () => {
-    const problems = findEligibilityProblems({ audited: 'yes', group: 'yes', overseas: 'no', specialistRelief: '' })
+    const problems = findEligibilityProblems({ audited: 'yes', group: 'yes', overseas: 'no', specialistRelief: '', chargeableGains: 'no' })
     expect(problems).toHaveLength(3)
+  })
+
+  it('flags a chargeable-gains disposal as out of scope', () => {
+    const problems = findEligibilityProblems({ ...ALL_CLEAR, chargeableGains: 'yes' })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]!.title).toMatch(/chargeable gains/i)
   })
 })

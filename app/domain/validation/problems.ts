@@ -13,6 +13,15 @@ export interface ProblemInputs {
   microEntityTurnoverLimit: number
   directorLoanBalance: number
   directorLoanRepaidAnswered: boolean
+  /** requirements.md §13 — the accounting period straddles 1 April into a
+   *  Financial Year with different Corporation Tax rates, so the taxable
+   *  total profits were apportioned between them rather than taxed at a
+   *  single rate (`periodSpansDifferingFinancialYearRates`). */
+  periodSpansDifferingRates: boolean
+  /** True when the accounting period is longer than 12 months
+   *  (`isLongAccountingPeriod`) — this product doesn't support splitting
+   *  it into the two CT600 returns HMRC requires, so filing is blocked. */
+  periodExceeds12Months: boolean
 }
 
 /** The eligibility/validation engine requirements.md §21 asks for, scoped
@@ -78,6 +87,26 @@ export function findProblems(inputs: ProblemInputs): FilingProblem[] {
       step: 'tax',
       title: 'Depreciation added back does not match the accounts',
       detail: `The profit and loss account shows £${formatPounds(inputs.accountsDepreciation)}; the computation adds back £${formatPounds(inputs.addBackDepreciation)}.`
+    })
+  }
+
+  if (inputs.periodSpansDifferingRates) {
+    problems.push({
+      id: 'period-spans-rate-change',
+      sev: 'warn',
+      step: 'tax',
+      title: 'Accounting period spans a Corporation Tax rate change',
+      detail: 'This period crosses 1 April into a year with different tax rates, so the profit has been split and taxed at each year’s rate. Check the figures on the tax step before filing.'
+    })
+  }
+
+  if (inputs.periodExceeds12Months) {
+    problems.push({
+      id: 'period-exceeds-12-months',
+      sev: 'error',
+      step: 'tax',
+      title: 'Accounting period is longer than 12 months',
+      detail: 'A period this long needs to be filed as two separate Corporation Tax returns, which this tool doesn’t support. An accountant or specialist software is needed instead.'
     })
   }
 

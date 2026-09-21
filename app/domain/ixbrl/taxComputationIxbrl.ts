@@ -75,7 +75,16 @@ export function generateTaxComputationIxbrl(input: TaxComputationIxbrlInput): st
           <xbrli:endDate>${esc(period.periodEnd)}</xbrli:endDate>
         </xbrli:period>
       </xbrli:context>
-      <xbrli:unit id="${uGBP}"><xbrli:measure>iso4217:GBP</xbrli:measure></xbrli:unit>
+      <xbrli:unit id="${uGBP}"><xbrli:measure>iso4217:GBP</xbrli:measure></xbrli:unit>${(result.segments ?? []).map((seg, i) => `
+      <xbrli:context id="ctx-fy${i + 1}">
+        <xbrli:entity>
+          <xbrli:identifier scheme="http://www.hmrc.gov.uk/">${cEntity}</xbrli:identifier>
+        </xbrli:entity>
+        <xbrli:period>
+          <xbrli:startDate>${esc(seg.from)}</xbrli:startDate>
+          <xbrli:endDate>${esc(seg.to)}</xbrli:endDate>
+        </xbrli:period>
+      </xbrli:context>`).join('')}
     </ix:hidden>
     <ix:references>
       <link:schemaRef xmlns:link="http://www.xbrl.org/2003/linkbase" xlink:type="simple"
@@ -97,6 +106,15 @@ export function generateTaxComputationIxbrl(input: TaxComputationIxbrlInput): st
     <tr><td>Corporation Tax chargeable (${esc(result.rates.version)})</td><td>${fact('CorporationTaxChargeable', p, cDuration, uGBP, result.corporationTax, 'f-cttax')}</td></tr>
   </table>
   <p>${esc(result.rateNote)}</p>
+
+  ${result.segments ? `<h2>Corporation Tax by Financial Year</h2>
+  <p>This period crosses 1 April into a year with a different tax rate, so profit is split between the two years below.</p>
+  <table>
+    ${result.segments.map((seg, i) => `
+    <tr><td>${esc(seg.rates.version)} (${esc(seg.from)} to ${esc(seg.to)}, ${seg.days} days)</td>
+        <td>${fact('TotalProfitsChargeableToCorporationTax', p, `ctx-fy${i + 1}`, uGBP, seg.profit, `f-ttp-fy${i + 1}`)}</td>
+        <td>${fact('CorporationTaxChargeable', p, `ctx-fy${i + 1}`, uGBP, seg.tax, `f-cttax-fy${i + 1}`)}</td></tr>`).join('')}
+  </table>` : ''}
 
   ${directorLoan?.ct600aRequired ? `<h2>CT600A — Loans to participators</h2>
   <table>

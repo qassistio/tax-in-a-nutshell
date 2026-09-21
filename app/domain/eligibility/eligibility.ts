@@ -13,6 +13,7 @@ export interface EligibilityAnswers {
   group: string
   overseas: string
   specialistRelief: string
+  chargeableGains: string
 }
 
 interface EligibilityCheck {
@@ -57,6 +58,14 @@ export const ELIGIBILITY_CHECKS: EligibilityCheck[] = [
     question: 'Is the company claiming R&D relief, Patent Box, creative-industry relief, or any other specialist tax relief?',
     title: 'Specialist tax reliefs are not supported',
     detail: 'R&D, Patent Box and creative-industry claims need their own supplementary pages, which this product doesn’t generate.'
+  },
+  {
+    id: 'chargeable-gains',
+    answerKey: 'chargeableGains',
+    failsOn: 'yes',
+    question: 'Did the company sell any property, shares, or other assets at a gain or loss during the period?',
+    title: 'Chargeable gains are not supported',
+    detail: 'Selling assets at a gain or loss needs extra CT600 pages this product doesn’t generate. An accountant or specialist software is needed instead.'
   }
 ]
 

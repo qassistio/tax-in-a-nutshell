@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildCt600Xml } from './ct600'
-import { ratesFor, calculateCorporationTax } from '../tax/corporationTax'
+import { buildCt600Xml, validateCt600XmlShape } from './ct600'
+import { ratesFor, calculateCorporationTax, apportionAcrossFinancialYears, type CorporationTaxRates } from '../tax/corporationTax'
 import { assessDirectorLoan, directorLoanRatesFor } from '../tax/directorLoans'
 import type { CompanyDetails, AccountingPeriod } from '../types'
 
@@ -83,5 +83,40 @@ describe('buildCt600Xml', () => {
     expect(xml).toContain('<AcceptDeclaration>yes</AcceptDeclaration>')
     expect(xml).toContain('<Name>Jo Bloggs</Name>')
     expect(xml).toContain('<Status>Director</Status>')
+  })
+
+  it('emits FinancialYearOne and FinancialYearTwo when the tax result is apportioned across a straddling period', () => {
+    const fy1: CorporationTaxRates = { version: 'FY-test-1', smallProfitsRate: 0.10, mainRate: 0.20, lowerLimit: 50_000, upperLimit: 250_000, marginalReliefFraction: 1 / 100 }
+    const fy2: CorporationTaxRates = { version: 'FY-test-2', smallProfitsRate: 0.15, mainRate: 0.30, lowerLimit: 50_000, upperLimit: 250_000, marginalReliefFraction: 1 / 100 }
+    const straddlingResult = apportionAcrossFinancialYears(10_000, 0, [
+      { fyStartYear: 2024, days: 90, rates: fy1 },
+      { fyStartYear: 2025, days: 275, rates: fy2 }
+    ])
+    const xml = buildCt600Xml({ ...baseInput, result: straddlingResult })
+    expect(xml).toContain('<FinancialYearOne>')
+    expect(xml).toContain('<Year>2024</Year>')
+    expect(xml).toContain(`<Profit>${straddlingResult.segments![0].profit.toFixed(2)}</Profit>`)
+    expect(xml).toContain('<FinancialYearTwo>')
+    expect(xml).toContain('<Year>2025</Year>')
+    expect(xml).toContain(`<Profit>${straddlingResult.segments![1].profit.toFixed(2)}</Profit>`)
+  })
+})
+
+describe('validateCt600XmlShape', () => {
+  it('finds no problems in a normally-built CT600', () => {
+    const xml = buildCt600Xml(baseInput)
+    expect(validateCt600XmlShape(xml)).toEqual([])
+  })
+
+  it('flags a missing required element', () => {
+    const xml = buildCt600Xml(baseInput).replace('<Turnover>', '<TurnoverX>').replace('</Turnover>', '</TurnoverX>')
+    const problems = validateCt600XmlShape(xml)
+    expect(problems.some(p => p.includes('<Turnover>'))).toBe(true)
+  })
+
+  it('flags unbalanced tags', () => {
+    const xml = buildCt600Xml(baseInput).replace('</Declaration>', '')
+    const problems = validateCt600XmlShape(xml)
+    expect(problems.some(p => /do not balance/.test(p))).toBe(true)
   })
 })
