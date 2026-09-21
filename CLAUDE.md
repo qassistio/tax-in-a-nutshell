@@ -62,6 +62,9 @@ Key derived state, all `computed()`:
   can link straight to the field that needs fixing.
 - `stepOwnFieldsFilled(step)` / `unlockedSteps` — gates step nav; "filled" means *answered*, not *passing* (an
   eligibility failure still unlocks later steps so the user can review the whole flow, but blocks `canSubmit`).
+- `stepStatus(step)` — drives the nav-mark icons in `app.vue`. Only shows `error`/`warn` once a step is in
+  `state.visitedSteps` (added by `go()`/`move()` when leaving a step) — same staleness rule `StepProblems.vue`
+  uses, so a freshly-arrived-at step doesn't immediately flag red before the user has had a chance to fill it in.
 - `capitalAllowances`, `lossRelief`, `directorLoanAssessment`, `taxableTotalProfits`, `corporationTax`,
   `totalTaxPayable` — the tax computation chain, each depending on the previous (capital allowances → trading
   result → loss relief → taxable total profits → Corporation Tax → total tax payable including any s.455).
@@ -112,6 +115,10 @@ external gateways are involved and their statuses (`hmrc_*` / `ch_*` columns) ar
   company-lookup REST API (`search.get.ts`, `company/[number].get.ts`, `NUXT_COMPANIES_HOUSE_API_KEY`) used
   only to prefill company details.
 
+`server/api/healthz.get.ts` calls `getDb()` + a trivial query and returns 503 with the real error message on
+failure — curl it on a deployed instance to diagnose DB/env-var problems directly rather than discovering them
+mid-submission.
+
 ### Validation (`app/domain/validation/problems.ts`)
 
 `REQUIRED_AMOUNT_FIELDS` is the single source of truth for which typed amount fields are mandatory per step —
@@ -120,6 +127,17 @@ required field is a one-line addition here (a blank field is always an error, ev
 figure — nil must be typed, never assumed). `findProblems()` covers everything else (balance sheet balancing,
 UTR format, turnover threshold, etc.) and returns the same `FilingProblem { id, sev, step, title, detail }`
 shape used everywhere else in the validation/eligibility pipeline.
+
+### Small circular UI elements (`.wizard-nav-mark` in `broadsheet.css`)
+
+Centering a small icon inside a circular badge with `place-items: center`/`margin: auto` can look off-center
+in a way that shifts with page width — the offset is derived from *leftover space*, which itself derives from
+ancestor flex/grid layout's fractional widths, so it can land on a fractional device pixel the browser rounds
+inconsistently. Fix: use explicit literal values (e.g. `border: 1px`) instead of anything computed from
+"available space ÷ 2". Separately, an SVG icon sized to fill its box exactly can show a visible hairline gap
+against a CSS `border-radius` ring, since the two curves are drawn by different rasterizers and can be a
+fractional pixel apart — let the icon fill 100% of its box and rely on its own built-in glyph margin (e.g.
+Phosphor "fill"-weight icons draw at ~81% of their viewBox) rather than precisely inset-ing it.
 
 ### Audit trail (`app/domain/audit/auditTrail.ts`)
 

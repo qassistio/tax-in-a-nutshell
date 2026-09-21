@@ -1,20 +1,14 @@
-// requirements.md §19 ("AI should not dynamically guess filing tags during
-// production filing") — HMRC's Corporation Tax submission channel is NOT
-// part of the modern OAuth2 Making Tax Digital API family. It is the
-// legacy GovTalk/XML gateway at
-// https://transaction-engine.tax.service.gov.uk/submission, authenticated
-// with a Government Gateway username/password plus an HMRC-issued vendor
-// ID, using message class HMRC-CT-CT600-TIL (Test-In-Live) or
-// HMRC-CT-CT600 (live), with an IRmark digital signature embedded in the
-// body.
+// requirements.md §19 — HMRC's Corporation Tax channel is NOT the modern
+// OAuth2 Making Tax Digital API family; it's the legacy GovTalk/XML
+// gateway, authenticated with a Government Gateway username/password plus
+// an HMRC-issued vendor ID, message class HMRC-CT-CT600-TIL (Test-In-Live)
+// or HMRC-CT-CT600 (live), with an IRmark digital signature in the body.
 //
-// CAVEAT: the envelope shape below follows HMRC's published GovTalk
-// schema at a structural level. It has not been validated against a real
-// submission. GovTalk submissions are asynchronous (requirements.md §24:
-// "Polling where required") — HMRC typically responds to the initial
-// submit with an `acknowledgement` carrying a CorrelationID and a poll
-// endpoint, and the real accept/reject only arrives once you poll that
-// endpoint — see buildGovTalkPollEnvelope/parseGovTalkResponse below.
+// CAVEAT: envelope shape follows HMRC's published GovTalk schema
+// structurally but hasn't been validated against a real submission.
+// Submissions are asynchronous (§24): submit returns an `acknowledgement`
+// with a CorrelationID + poll endpoint; the real accept/reject only
+// arrives on poll — see buildGovTalkPollEnvelope/parseGovTalkResponse.
 
 export type CtMessageClass = 'HMRC-CT-CT600-TIL' | 'HMRC-CT-CT600'
 
@@ -39,11 +33,10 @@ function esc(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-/** The `<IRenvelope>` element and everything inside it — shared between
- *  the real envelope (built with the real IRmark) and the hashing body
- *  below (built with an empty IRmark, per HMRC's published algorithm:
- *  the mark is computed with the `<IRmark>` element present but empty,
- *  never over itself). Kept as one function so the two can't drift. */
+/** The `<IRenvelope>` element, shared between the real envelope (real
+ *  IRmark) and the hashing body below (empty IRmark, per HMRC's algorithm:
+ *  the mark is computed with the element present but empty). One function
+ *  so the two can't drift. */
 function buildIrEnvelopeInner(input: Pick<GovTalkEnvelopeInput, 'companyUtr' | 'companyName' | 'periodEnd' | 'bodyXml'> & { irMark: string }): string {
   return `<IRenvelope xmlns="http://www.govtalk.gov.uk/taxation/CT/5">
       <IRheader>
@@ -57,24 +50,19 @@ function buildIrEnvelopeInner(input: Pick<GovTalkEnvelopeInput, 'companyUtr' | '
     </IRenvelope>`
 }
 
-/** Builds the exact `<Body>` fragment HMRC's IRmark algorithm is computed
- *  over: the real `<Body>` content, IRmark left empty, with the enclosing
- *  `GovTalkMessage` envelope's namespace declaration copied onto `<Body>`
- *  explicitly (it's only implicit-by-inheritance in the full envelope,
- *  but this fragment is hashed standalone, so the declaration has to be
- *  physically present for canonicalisation to see it — HMRC's spec calls
- *  this out explicitly). Actual canonicalisation + digest happens
- *  server-side (see server/api/hmrc/compute-irmark.post.ts) using a real
- *  W3C Exclusive C14N implementation — this file stays Vue/Node-free. */
+/** Builds the exact `<Body>` fragment HMRC's IRmark algorithm hashes: real
+ *  content, empty IRmark, with the envelope's namespace declaration copied
+ *  onto `<Body>` explicitly since this fragment is hashed standalone (only
+ *  implicit-by-inheritance in the full envelope). Canonicalisation + digest
+ *  happen server-side with real W3C Exclusive C14N (compute-irmark.post.ts)
+ *  — this file stays Vue/Node-free. */
 export function buildIrMarkHashingBody(input: Pick<GovTalkEnvelopeInput, 'companyUtr' | 'companyName' | 'periodEnd' | 'bodyXml'>): string {
   return `<Body xmlns="http://www.govtalk.gov.uk/CM/envelope">${buildIrEnvelopeInner({ ...input, irMark: '' })}</Body>`
 }
 
-/** Builds the GovTalk envelope wrapping a CT600 IRenvelope body. The
- *  caller supplies `bodyXml` (the IRenvelope-specific tax return content,
- *  including tagged iXBRL attachments) and a pre-computed IRmark — get
- *  the IRmark by hashing `buildIrMarkHashingBody(input)` first (see
- *  server/api/hmrc/compute-irmark.post.ts). */
+/** Builds the GovTalk envelope wrapping a CT600 IRenvelope body. Caller
+ *  supplies `bodyXml` and a pre-computed IRmark (hash
+ *  `buildIrMarkHashingBody(input)` first — see compute-irmark.post.ts). */
 export function buildGovTalkEnvelope(input: GovTalkEnvelopeInput): string {
   const timestamp = new Date().toISOString()
   const correlationId = input.correlationId ?? ''
@@ -127,10 +115,9 @@ export interface GovTalkPollInput {
   correlationId: string
 }
 
-/** GovTalk's "poll" request — sent to the poll endpoint HMRC returned
- *  with the acknowledgement, using the same CorrelationID, until a
- *  `response` or `error` qualifier comes back instead of another
- *  acknowledgement. */
+/** GovTalk's "poll" request, sent to the endpoint HMRC returned with the
+ *  acknowledgement, same CorrelationID, until `response`/`error` replaces
+ *  another acknowledgement. */
 export function buildGovTalkPollEnvelope(input: GovTalkPollInput): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <GovTalkMessage xmlns="http://www.govtalk.gov.uk/CM/envelope">

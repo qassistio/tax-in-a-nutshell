@@ -1,15 +1,10 @@
-// Capital allowances (requirements.md §12/§9/§40), kept deliberately
-// aggregate rather than an asset-by-asset register: the filer supplies
-// total qualifying additions and disposals for the period plus the main
-// pool balance brought forward, and this applies the Annual Investment
-// Allowance followed by the main-pool writing-down allowance. Good enough
-// for an owner-managed micro-entity's ordinary plant and machinery; a
-// company with special-rate-pool assets, cars, or a pooling history
-// complex enough to need per-asset tracking is outside this product's
-// scope (requirements.md §2).
+// Capital allowances (requirements.md §12/§9/§40), kept aggregate rather
+// than an asset-by-asset register: filer supplies total additions/
+// disposals plus main pool brought forward; AIA then main-pool WDA is
+// applied. Special-rate-pool assets, cars, or complex pooling history are
+// out of scope (requirements.md §2).
 //
-// Rates are versioned by effective date, same pattern as
-// tax/corporationTax.ts — nothing here reads "the current AIA limit".
+// Rates are versioned by effective date, same pattern as corporationTax.ts.
 
 export interface CapitalAllowanceRates {
   version: string
@@ -47,13 +42,10 @@ export interface CapitalAllowancesResult {
   poolCarriedForward: number
 }
 
-/** Annual Investment Allowance first (100% on qualifying additions up to
- *  the limit), then an 18% writing-down allowance on whatever's left in
- *  the main pool after AIA and disposals. Disposal proceeds simply reduce
- *  the pool before WDA is calculated — a balancing charge (proceeds
- *  exceeding the pool) is left at £0 allowance rather than turned into a
- *  taxable credit, since that scenario is rare for a company this small
- *  and is flagged for manual review instead of silently miscalculated. */
+/** AIA first (100% up to the limit), then WDA on what's left in the pool
+ *  after AIA and disposals. A balancing charge (proceeds exceeding the
+ *  pool) is left at £0 allowance rather than a taxable credit — rare
+ *  enough for a company this size to flag for manual review instead. */
 export function calculateCapitalAllowances(input: CapitalAllowancesInput): CapitalAllowancesResult {
   const { poolBroughtForward, additions, disposals, rates } = input
   const aiaClaimed = Math.min(Math.max(additions, 0), rates.aiaLimit)

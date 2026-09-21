@@ -1,27 +1,16 @@
 // Builds and submits a real Companies House XML Gateway accounts envelope
-// (see app/domain/filing/companiesHouseGovTalk.ts) to
-// https://xmlgw.companieshouse.gov.uk/v1-0/xmlgw/Gateway and records the
-// resulting status against a GUID-keyed row in the local SQLite store
-// (server/utils/db.ts) — status metadata only, no accounting figures, no
-// credentials.
+// (see companiesHouseGovTalk.ts) and records the resulting status against
+// a GUID-keyed row (server/utils/db.ts) — status metadata only.
 //
-// The envelope is built entirely here, server-side, rather than in the
-// browser: the Presenter ID, Presenter Authentication Code and Package
-// Reference are TaxInANutshell's own Companies House Software Filing
-// credentials (like OAuth client credentials — they identify this
-// software to the gateway, not the filer), so they're read from server
-// env vars (NUXT_COMPANIES_HOUSE_PRESENTER_ID / _PRESENTER_AUTH_CODE /
-// _PACKAGE_REFERENCE) and never sent to or held in the browser. Only the
-// Company Authentication Code (specific to the company being filed for,
-// issued by CH to that company) and the contact email come from the
-// browser, same as before.
+// Envelope is built entirely server-side: Presenter ID/Auth Code/Package
+// Reference are TaxInANutshell's own credentials (NUXT_COMPANIES_HOUSE_*
+// env vars), never sent to the browser. Only the Company Authentication
+// Code and contact email come from the browser.
 //
-// Unlike HMRC's CT600 gateway, Companies House parses BOTH the GovTalk
-// envelope AND the embedded iXBRL synchronously (TIS v5.9) — a
-// `response`/`error` qualifier is the expected first reply, not
-// necessarily an `acknowledgement` requiring a separate poll. This route
-// records whichever qualifier comes back; further asynchronous processing
-// against the SubmissionNumber (once parsing succeeds) is handled by
+// Unlike HMRC's CT600 gateway, CH parses both the envelope and embedded
+// iXBRL synchronously (TIS v5.9) — a `response`/`error` qualifier is the
+// expected first reply, not necessarily an `acknowledgement`. Further
+// async processing against SubmissionNumber is handled by
 // poll-accounts.post.ts.
 
 import { createHash } from 'node:crypto'
@@ -57,10 +46,8 @@ export default defineEventHandler(async (event) => {
 
   const senderIdHash = createHash('md5').update(config.companiesHousePresenterId, 'utf8').digest('hex')
   const authValueHash = createHash('md5').update(config.companiesHousePresenterAuthCode, 'utf8').digest('hex')
-  // DB-backed, not a local counter — Companies House requires
-  // <TransactionID> to strictly increase across the presenter's whole
-  // history, which an in-memory counter can't guarantee across page
-  // reloads (see nextChTransactionId in server/utils/db.ts).
+  // DB-backed, not an in-memory counter — <TransactionID> must strictly
+  // increase across the presenter's whole history.
   const transactionId = String(await nextChTransactionId())
   const submissionNumber = crypto.randomUUID().replace(/-/g, '').slice(0, 20)
 

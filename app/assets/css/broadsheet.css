@@ -213,7 +213,31 @@ textarea.input { min-height: 90px; resize: vertical; }
 .wizard-nav-item.is-current { background: var(--color-accent-100); color: var(--color-accent-800); font-weight: 600; }
 .wizard-nav-item.is-locked { color: color-mix(in srgb, var(--color-text) 32%, transparent); cursor: not-allowed; }
 .wizard-nav-item.is-locked:hover { background: transparent; }
-.wizard-nav-mark { flex: none; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; border: 1.5px solid var(--color-divider); }
+/* place-items: center (like margin: auto centering generally) positions its
+   child by dividing *leftover* space in half — and that leftover is derived
+   from the ancestor flex layout's fractional widths, which shift as the
+   sidebar reflows at different page widths. Any such computed value can
+   land on a fractional device pixel that the browser then has to round,
+   consistently biasing the icon toward one corner — and which corner (and
+   by how much) can change as the page width changes the fractional part.
+   Explicit equal border side-steps that: it's a literal value, not derived
+   from available space, so there's never a remainder to round unevenly,
+   regardless of layout width.
+   The icon itself now fills the full remaining box (width/height: 100%)
+   rather than being sized/inset to sit just inside a hairline margin —
+   Phosphor's "fill" weight glyphs already draw their circle at ~81% of
+   their own viewBox, so the ring appears from that built-in margin, not
+   from precisely aligning two independently-rasterized circular edges
+   (the CSS border-radius curve and the SVG path's curve) a hairline apart.
+   Those two curves are drawn by different rasterizers and can be a
+   fractional device pixel off from each other — invisible once there's a
+   couple of pixels of solid margin between them, but very visible when
+   they were made to nearly touch. */
+.wizard-nav-mark {
+  flex: none; width: 16px; height: 16px; border-radius: 50%; box-sizing: border-box;
+  border: 1px solid var(--color-divider); font-size: 10px;
+}
+.wizard-nav-mark svg { display: block; width: 100%; height: 100%; }
 .wizard-nav-mark.is-done { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-bg); }
 .wizard-nav-mark.is-error { background: var(--color-accent-2); border-color: var(--color-accent-2); color: var(--color-bg); }
 .wizard-nav-mark.is-warn { border-color: var(--color-accent-2); color: var(--color-accent-2); }

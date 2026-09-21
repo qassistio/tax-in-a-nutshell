@@ -1,18 +1,10 @@
-// Companies House's Public Data API (api.company-information.service.gov.uk)
-// — a completely separate CH product from the XML Gateway used elsewhere
-// under server/api/companies-house/: this is the free, read-only REST API
-// for searching public company records, authenticated with its own API
-// key (HTTP Basic, the key as username, a blank password — see
-// https://developer-specs.company-information.service.gov.uk/). Backs the
-// company search on StepCompany.vue, so the filer can find their company
-// by name rather than typing the number in from memory — see
-// company/[number].get.ts for the follow-up lookup that actually prefills
-// the form (requirements.md §3.1: "Where possible, public company
-// information should be retrieved automatically from Companies House
-// rather than entered manually").
+// Companies House's Public Data API — a separate CH product from the XML
+// Gateway used elsewhere here: free, read-only REST, authenticated with
+// its own API key (HTTP Basic, key as username, blank password). Backs
+// company search on StepCompany.vue (requirements.md §3.1); see
+// company/[number].get.ts for the follow-up lookup that prefills the form.
 //
-// TaxInANutshell's own API key, not a filer secret — read from a server
-// env var, same reasoning as the XML Gateway presenter credentials.
+// TaxInANutshell's own API key, not a filer secret — read from a server env var.
 
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)

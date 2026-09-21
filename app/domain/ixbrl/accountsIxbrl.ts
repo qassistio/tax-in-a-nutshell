@@ -3,14 +3,11 @@
 // context (balance sheet date) and one duration context (the period), a
 // GBP unit, and ix:nonFraction facts tagged against the FRS 105 taxonomy.
 //
-// CAVEAT (requirements.md §19: "AI should not dynamically guess filing
-// tags during production filing"): the element names below were checked
-// against a real downloaded copy of the FRC 2026 Taxonomy Suite (see the
-// note in taxonomy.ts for how and when) rather than guessed — but that
-// check was a one-off manual exercise, not an automated or independently
-// reviewed one. Treat this as a materially better structural draft than
-// before, not a substitute for review against the real taxonomy pack
-// before any real submission.
+// CAVEAT (requirements.md §19): element names were checked against a real
+// downloaded copy of the FRC 2026 Taxonomy Suite (see taxonomy.ts), not
+// guessed — but that check was a one-off manual exercise, not automated
+// or independently reviewed. Review against the real taxonomy pack before
+// any real submission.
 
 import { accountsTaxonomyFor } from './taxonomy'
 import type { CompanyDetails, AccountingPeriod, BalanceSheetFigures, ProfitAndLossFigures, ComparativeFigures } from '../types'
@@ -81,12 +78,9 @@ export function generateAccountsIxbrl(input: AccountsIxbrlInput): string {
     ? `<th>${esc(period.periodEnd)}</th><th>${esc(comparative.period.periodEnd)}</th>`
     : `<th>${esc(period.periodEnd)}</th>`
 
-  // Companies House's Technical Interface Specification for Accounts v5.9
-  // requires the Instance's first line to be exactly
-  // `<?xml version="1.0"?>` with no additional whitespace in the string
-  // declaration — no encoding attribute. UTF-8 is XML's own default when
-  // none is declared, so dropping it here doesn't change how this is
-  // read, just satisfies that literal, synchronously-checked rule.
+  // TIS v5.9 requires the Instance's first line to be exactly
+  // `<?xml version="1.0"?>`, no encoding attribute — UTF-8 is XML's
+  // default anyway, so omitting it just satisfies that literal rule.
   return `<?xml version="1.0"?>
 <html xmlns="http://www.w3.org/1999/xhtml"
       xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"

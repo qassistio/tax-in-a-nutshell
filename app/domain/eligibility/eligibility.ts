@@ -1,10 +1,8 @@
 // Eligibility / unsupported-case screening (requirements.md §2/§3.2/§34,
-// §41's FilingCapabilities idea). Runs early — before the filer spends
-// time entering figures — so an out-of-scope company finds out at the
-// start rather than at the filing step. Deliberately a short checklist
-// rather than a general eligibility engine: this product only ever
-// supports the scope in requirements.md §2/§40, so the questions just
-// need to rule that scope in or out, not model every possible case.
+// §41's FilingCapabilities idea). Runs early so an out-of-scope company
+// finds out before entering figures. A short checklist, not a general
+// eligibility engine — this product only supports requirements.md §2/§40's
+// fixed scope.
 
 import type { FilingProblem } from '../types'
 

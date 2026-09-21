@@ -1,16 +1,12 @@
 // requirements.md §19/§20 — generates a structurally valid XHTML + inline
-// XBRL document for the CT600 tax computation: accounting profit, the
-// standard add-backs/deductions, taxable total profits, and the
-// Corporation Tax charge, tagged against HMRC's CT taxonomy.
+// XBRL document for the CT600 tax computation: accounting profit,
+// add-backs/deductions, taxable total profits, and the CT charge, tagged
+// against HMRC's CT taxonomy.
 //
-// Same caveat as accountsIxbrl.ts: element names below were checked
-// against a real downloaded copy of HMRC's CT computational 2024-01-01
-// taxonomy (fetched directly from www.hmrc.gov.uk/schemas/ct/comp/ — see
-// the note in taxonomy.ts) rather than guessed. That was still a one-off
-// manual check, not an automated or independently reviewed one —
-// requirements.md §19 explicitly warns against guessing filing tags for
-// production use, so review against the real taxonomy before any real
-// submission regardless.
+// Same caveat as accountsIxbrl.ts: element names were checked against a
+// real downloaded copy of HMRC's CT computational 2024-01-01 taxonomy
+// (see taxonomy.ts), but as a one-off manual check, not an automated or
+// independently reviewed one — review before any real submission.
 
 import { ctTaxonomyFor } from './taxonomy'
 import type { CompanyDetails, AccountingPeriod, TaxAdjustments } from '../types'

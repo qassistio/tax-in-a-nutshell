@@ -1,14 +1,9 @@
 // Drizzle schema for the ONE table this app persists server-side — see
-// the module comment in server/utils/db.ts for what it does and doesn't
-// hold. Lives under server/db/ (schema + migrations together) rather than
-// server/utils/ so drizzle-kit's config (drizzle.config.ts) has a single
-// directory to point at.
+// the module comment in server/utils/db.ts for what it holds.
 //
-// Field names are kept snake_case (matching the DB column names exactly)
-// rather than the more idiomatic Drizzle camelCase, because the resulting
-// row shape is used verbatim across every server route and in
-// useFilingWizard.ts's SubmissionRowDto — renaming to camelCase here
-// would mean touching every one of those call sites for no real benefit.
+// Field names stay snake_case (matching DB columns exactly) rather than
+// idiomatic Drizzle camelCase, since the row shape is used verbatim across
+// every server route and useFilingWizard.ts's SubmissionRowDto.
 
 import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core'
 

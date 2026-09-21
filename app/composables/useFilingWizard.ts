@@ -18,8 +18,7 @@ import { generateTaxComputationIxbrl } from '../domain/ixbrl/taxComputationIxbrl
 import { diffFields, createAmendment, type Amendment } from '../domain/filing/amendments'
 import { translateGovTalkErrors, type TranslatedError } from '../domain/filing/rejectionMessages'
 
-/** Shape returned by the submission-status server routes — snake_case
- *  because it mirrors the SQLite row directly (server/utils/db.ts). */
+/** Submission-status server routes' shape — snake_case, mirrors the SQLite row directly. */
 interface SubmissionRowDto {
   id: string
   hmrc_status: string
@@ -56,9 +55,8 @@ const STEP_LABELS: Record<StepId, string> = {
   receipt: 'Receipt'
 }
 
-/** Every value the wizard binds to an input, kept flat and stringly-typed
- *  like real form state — parsing into numbers happens in the domain
- *  layer, not here. Nothing is pre-filled: this is a blank return. */
+/** Every wizard input field, flat and stringly-typed like real form state
+ *  — parsing into numbers happens in the domain layer, not here. */
 function emptyFields() {
   return reactive({
     // eligibility (requirements.md §3.2/§34) — 'yes' | 'no' | ''
@@ -70,17 +68,15 @@ function emptyFields() {
     // balance sheet
     unpaidCapital: '', fixedAssets: '', currentAssets: '', prepayments: '',
     creditorsWithin: '', creditorsAfter: '', provisions: '', shareCapital: '', retained: '',
-    // prior-year comparatives (requirements.md §11) — same shape as the
-    // balance sheet/P&L above, only asked for/required when firstPeriod
-    // !== 'yes'
+    // prior-year comparatives (requirements.md §11), same shape as above; only
+    // required when firstPeriod !== 'yes'
     cmpUnpaidCapital: '', cmpFixedAssets: '', cmpCurrentAssets: '', cmpPrepayments: '',
     cmpCreditorsWithin: '', cmpCreditorsAfter: '', cmpProvisions: '', cmpShareCapital: '', cmpRetained: '',
     cmpTurnover: '', cmpOtherIncome: '', cmpRawMaterials: '', cmpStaffCosts: '', cmpDepreciation: '', cmpOtherCharges: '',
     // profit and loss
     turnover: '', otherIncome: '', rawMaterials: '', staffCosts: '', depreciation: '', otherCharges: '',
-    // tax computation — capital allowances are computed from these three
-    // (requirements.md §12), not typed in directly; same for losses and
-    // the director loan / s.455 charge below.
+    // tax computation — capital allowances/losses/s.455 are all derived from
+    // these (requirements.md §12), not typed in directly
     addDepreciation: '', addEntertaining: '', associated: '',
     caPoolBroughtForward: '', caAdditions: '', caDisposals: '',
     lossesBroughtForward: '',
@@ -89,24 +85,20 @@ function emptyFields() {
     avgEmployees: '', directorAdvances: '', commitments: '',
     // declaration
     approver: '', approvalDate: '', declName: '', declRole: '', gwUser: '', gwPass: '',
-    // Companies House XML Gateway credentials (see
-    // app/domain/filing/companiesHouseGovTalk.ts) that legitimately belong
-    // in the browser: the Company Authentication Code is specific to the
-    // company being filed for, and the contact email isn't a secret. The
-    // Presenter ID, Presenter Authentication Code and Package Reference
-    // are TaxInANutshell's own credentials, not the filer's — those live
-    // server-side only (NUXT_COMPANIES_HOUSE_* env vars), never here.
+    // Companies House fields that legitimately live in the browser (auth
+    // code is company-specific, email isn't secret) — TaxInANutshell's own
+    // presenter credentials stay server-side (NUXT_COMPANIES_HOUSE_* env
+    // vars), never here. See app/domain/filing/companiesHouseGovTalk.ts.
     chCompanyAuthCode: '', chEmail: ''
   })
 }
 
 type FieldKey = keyof ReturnType<typeof emptyFields>
 
-/** The current-year question plus, where one exists, its prior-year
- *  comparative counterpart (same cmp*-prefixed field the table view binds
- *  to — see StepBalance.vue) — expanded into the flat, ordered list of
- *  guided questions by guidedSteps below, asking each line's prior-year
- *  figure right after its current-year one while it's fresh in mind. */
+/** Current-year question plus its cmp*-prefixed comparative counterpart
+ *  (see StepBalance.vue) — guidedSteps below flattens this into the actual
+ *  question sequence, asking each prior-year figure right after its
+ *  current-year one. */
 const GUIDED_BALANCE_FIELDS: Array<{ key: FieldKey; label: string; help: string; comparativeKey?: FieldKey }> = [
   { key: 'unpaidCapital', label: 'Called up share capital not paid', help: 'Usually £0 unless shares were issued but not yet paid for.', comparativeKey: 'cmpUnpaidCapital' },
   { key: 'fixedAssets', label: 'Fixed assets', help: 'Equipment, vehicles, property and other assets kept for continuing use, at net book value.', comparativeKey: 'cmpFixedAssets' },
@@ -134,20 +126,14 @@ export function useFilingWizard() {
     auditLog: [] as AuditEntry[],
     approval: null as ApprovalRecord | null,
     vendorId: '',
-    // Neither HMRC's Test-In-Live/live message Class nor Companies
-    // House's equivalent <GatewayTest> flag is client state — both are
-    // server-only env vars (NUXT_HMRC_TEST_IN_LIVE / hmrcTestInLive,
-    // NUXT_COMPANIES_HOUSE_GATEWAY_TEST / companiesHouseGatewayTest, see
-    // nuxt.config.ts) read directly by submit-ct600.post.ts and
-    // submit-accounts.post.ts/poll-accounts.post.ts respectively.
+    // Test-In-Live/GatewayTest flags aren't client state — they're
+    // server-only env vars (hmrcTestInLive, companiesHouseGatewayTest, see
+    // nuxt.config.ts) read directly by the submit/poll API routes.
     hmrcReceipt: null as GatewayReceipt | null,
     chReceipt: null as GatewayReceipt | null,
-    // Steps the filer has already left at least once — StepProblems.vue
-    // only shows "this is blank"-type errors for a step once it's in here,
-    // so a step you've just freshly arrived at (and haven't had a chance
-    // to fill in yet) never greets you with a wall of errors; leaving it
-    // once (forward or back) is what makes its problems "stale" enough to
-    // flag, including on a later revisit.
+    // Steps the filer has left at least once — gates "this is blank"
+    // errors (StepProblems.vue, stepStatus below) so a freshly-arrived
+    // step doesn't immediately flag as an error.
     visitedSteps: new Set<StepId>(),
     submitting: false,
     chSubmitting: false,
@@ -168,9 +154,8 @@ export function useFilingWizard() {
   }
 
   /** requirements.md §31 — chains a new Amendment from a previously
-   *  downloaded receipt (re-supplied by the user, since only a submission
-   *  status record persists server-side — no accounting figures) against
-   *  the current, in-progress figures. */
+   *  downloaded receipt (re-supplied by the user; only submission status
+   *  persists server-side) against the current, in-progress figures. */
   async function createAmendmentFromReceipt(previousReceiptJson: string, reason: string): Promise<Amendment> {
     const previous = JSON.parse(previousReceiptJson) as { fields: Record<string, string>; corporationTax?: number }
     const previousReceiptHash = await hashArtefacts(previous as unknown as Record<string, unknown>)
@@ -191,11 +176,8 @@ export function useFilingWizard() {
 
   const f = emptyFields()
 
-  /** requirements.md §3.1 — "Where possible, public company information
-   *  should be retrieved automatically from Companies House rather than
-   *  entered manually." Searches Companies House's public register by
-   *  name (server/api/companies-house/search.get.ts); does not touch `f`
-   *  itself, since the filer still needs to pick the right result. */
+  /** requirements.md §3.1 — searches Companies House's public register by
+   *  name; doesn't touch `f` itself since the filer still picks a result. */
   async function searchCompaniesHouse(query: string) {
     if (!query.trim()) return []
     const res = await $fetch<{ results: Array<{ companyNumber: string; companyName: string; status?: string; addressSnippet?: string }> }>(
@@ -222,20 +204,12 @@ export function useFilingWizard() {
   }
 
   const order = computed<StepId[]>(() => {
-    // requirements.md §25 — accounts and CT600 are tracked as independent
-    // filings, submitted to two different gateways (Companies House's XML
-    // Gateway and HMRC's CT600 GovTalk gateway have no joint-filing API
-    // between them). When both are chosen, accounts go to Companies House
-    // first (there's a dedicated step for it, right after the figures
-    // that make them up) and the CT600/tax computation follows — see
-    // server/api/companies-house/submit-accounts.post.ts.
-    // requirements.md §11 — prior-year comparative figures are entered as
-    // a second column right alongside the current year's, on the balance
-    // sheet and P&L steps themselves (see StepBalance.vue/StepProfitLoss
-    // .vue), rather than as a separate step — that's how accountants
-    // expect to see them, and it's only shown once the filer has said (on
-    // the period step) that this isn't the company's first period, since
-    // a first period has nothing to compare to.
+    // requirements.md §25 — accounts and CT600 go to two separate gateways
+    // with no joint-filing API, so when both are selected, accounts (via
+    // Companies House) come first and CT600/tax follows.
+    // requirements.md §11 — comparatives are a second column on the
+    // balance/pnl steps themselves (not a separate step), shown only when
+    // firstPeriod !== 'yes'.
     const steps: StepId[] = ['start', 'eligibility', 'company', 'period', 'balance', 'pnl']
     if (state.filings.companiesHouse) steps.push('chSubmit')
     if (state.filings.ct600) steps.push('tax')
@@ -280,10 +254,9 @@ export function useFilingWizard() {
     otherCharges: parsePounds(f.otherCharges)
   }))
 
-  // Prior-year totals for the comparative column on StepBalance.vue/
-  // StepProfitLoss.vue — same shape as balance/pnl above, just fed from
-  // the cmp*-prefixed fields. Not gated on f.firstPeriod here since the
-  // components themselves decide whether to render the column at all.
+  // Prior-year totals for the comparative column — same shape as balance/pnl,
+  // fed from the cmp*-prefixed fields. Not gated on f.firstPeriod here; the
+  // components decide whether to render the column.
   const comparativeBalance = computed(() => balanceSheetTotals({
     unpaidCapital: parsePounds(f.cmpUnpaidCapital),
     fixedAssets: parsePounds(f.cmpFixedAssets),
@@ -346,8 +319,7 @@ export function useFilingWizard() {
     repaidBeforeDue: f.directorLoanRepaidBeforeDue === 'yes'
   }, directorLoanRates.value))
 
-  /** Corporation Tax plus any Section 455 charge — the total amount due
-   *  to HMRC for the period, shown on review/receipt. */
+  /** Corporation Tax plus any Section 455 charge — total due to HMRC. */
   const totalTaxPayable = computed(() => corporationTax.value.corporationTax + directorLoanAssessment.value.s455Due)
 
   const deadlines = computed(() => calculateDeadlines(f.periodStart, f.periodEnd))
@@ -380,15 +352,16 @@ export function useFilingWizard() {
 
   function stepStatus(step: StepId): 'done' | 'current' | 'error' | 'warn' | 'upcoming' {
     if (step === state.step) return 'current'
-    if (errorSteps.value.has(step)) return 'error'
-    if (warnSteps.value.has(step)) return 'warn'
+    // Same staleness rule as StepProblems.vue — only flag error/warn once visited.
+    if (state.visitedSteps.has(step)) {
+      if (errorSteps.value.has(step)) return 'error'
+      if (warnSteps.value.has(step)) return 'warn'
+    }
     return order.value.indexOf(step) < currentIndex.value ? 'done' : 'upcoming'
   }
 
-  /** Whether a step's own required inputs are filled in — used to gate the
-   *  step nav (a step whose prerequisites aren't done yet is greyed out
-   *  and unclickable, see app.vue), not to block the Continue/Back
-   *  buttons within the guided flow itself. */
+  /** Whether a step's own required inputs are filled in — gates the step
+   *  nav (unfilled prerequisites grey it out, see app.vue). */
   function stepOwnFieldsFilled(step: StepId): boolean {
     const amountFieldsFor = (s: string) =>
       REQUIRED_AMOUNT_FIELDS
@@ -396,10 +369,8 @@ export function useFilingWizard() {
         .every(x => String((f as Record<string, string>)[x.key] ?? '').trim())
     switch (step) {
       case 'start': return true
-      // "Own fields filled" means every question answered, not that the
-      // company necessarily passed — a scope failure is still an error on
-      // the review screen (via findEligibilityProblems), it just doesn't
-      // block moving on to see the rest of the wizard.
+      // "Filled" means answered, not passing — an eligibility failure still
+      // shows as an error on review but doesn't block moving on.
       case 'eligibility': return !!(f.eligAudited && f.eligGroup && f.eligOverseas && f.eligSpecialistRelief)
       case 'company': return !!(f.companyName.trim() && f.companyNumber.trim() && f.utr.trim())
       case 'period': return !!(f.periodStart && f.periodEnd)
@@ -410,14 +381,14 @@ export function useFilingWizard() {
       case 'notes': return !!f.avgEmployees.trim()
       case 'review': return true
       case 'declaration': return true
-      // Only reachable once a submission actually exists (either just
-      // submitted, or restored from a bookmarked ?submission= URL).
+      // Only reachable once a submission exists (just submitted, or restored
+      // from a bookmarked ?submission= URL).
       case 'receipt': return !!state.submissionId
     }
   }
 
-  /** Every step up to and including the first one whose own fields aren't
-   *  filled in yet — everything after that stays locked in the nav. */
+  /** Every step up to the first one whose own fields aren't filled —
+   *  everything after that stays locked in the nav. */
   const unlockedSteps = computed(() => {
     const unlocked = new Set<StepId>()
     for (const step of order.value) {
@@ -433,15 +404,9 @@ export function useFilingWizard() {
 
   const canSubmit = computed(() => problems.value.every(p => p.sev !== 'error') && state.declarationAgreed)
 
-  /** Whether the Continue button on the *current* step should be enabled.
-   *  Same "own required fields answered" rule stepOwnFieldsFilled uses to
-   *  gate the step nav, except chSubmit — its own fields are trivially
-   *  "filled" (there's nothing to type, see stepOwnFieldsFilled's
-   *  'chSubmit' case), but the whole point of that step is to actually
-   *  submit to Companies House before moving on, so Continue there stays
-   *  disabled until a non-rejected chReceipt exists. StepCompaniesHouse.vue
-   *  uses this to swap its own Continue button out for the submit action
-   *  until that's true. */
+  /** Whether Continue is enabled on the current step. Same rule as
+   *  stepOwnFieldsFilled, except chSubmit — that step has nothing to type,
+   *  but requires an actual (non-rejected) submission before moving on. */
   const canContinue = computed(() => {
     if (state.step === 'chSubmit') return !!state.chReceipt && state.chReceipt.status !== 'rejected'
     return stepOwnFieldsFilled(state.step)
@@ -497,9 +462,8 @@ export function useFilingWizard() {
     capAllowances: capitalAllowances.value.totalAllowances, associatedCompanies: parsePounds(f.associated)
   }))
 
-  // requirements.md §11 — the comparative period is derived from the
-  // current period's start date (one year immediately before it); only
-  // built (and only asked for) when this isn't the company's first period.
+  // requirements.md §11 — comparative period is one year before the current
+  // period's start; only built when this isn't the first period.
   const comparativePeriod = computed(() => f.firstPeriod !== 'yes' ? previousPeriodFor(f.periodStart) : null)
   const comparative = computed(() => {
     if (f.firstPeriod === 'yes' || !comparativePeriod.value) return undefined
@@ -543,10 +507,8 @@ export function useFilingWizard() {
     directorLoanBalance: parsePounds(f.directorLoanBalance)
   }))
 
-  /** Maps the SQLite-backed status row onto the two GatewayReceipt values
-   *  the UI reads, and re-derives plain-English rejection messages
-   *  (requirements.md §30) from whatever raw GovTalk error text is on
-   *  record. */
+  /** Maps the SQLite status row onto the two GatewayReceipt values the UI
+   *  reads, and re-derives plain-English rejection messages (§30). */
   function applySubmissionRow(row: SubmissionRowDto) {
     state.submissionId = row.id
     state.hmrcReceipt = {
@@ -587,10 +549,8 @@ export function useFilingWizard() {
     state.submitError = ''
     try {
       const bodyXml = `<CompanyTaxReturn><TaxComputation><![CDATA[${taxComputationIxbrl.value}]]></TaxComputation></CompanyTaxReturn>`
-      // IRmark is computed over the real <Body> content (empty IRmark, see
-      // buildIrMarkHashingBody) using real W3C Exclusive C14N — done
-      // server-side, not here, because that needs a real XML DOM/C14N
-      // library (see server/api/hmrc/compute-irmark.post.ts).
+      // IRmark needs real W3C Exclusive C14N, computed server-side (see
+      // compute-irmark.post.ts).
       const hashingBody = buildIrMarkHashingBody({
         companyUtr: f.utr, companyName: f.companyName, periodEnd: f.periodEnd, bodyXml
       })
@@ -599,11 +559,8 @@ export function useFilingWizard() {
         body: { bodyXml: hashingBody }
       })
 
-      // The envelope itself — including which message Class it carries,
-      // Test-In-Live or live — is built server-side now, not here, so
-      // that choice can't be made or overridden in the browser. See the
-      // comment atop submit-ct600.post.ts and hmrcTestInLive in
-      // nuxt.config.ts.
+      // Envelope (message Class, Test-In-Live vs live) is built server-side
+      // so it can't be overridden from the browser — see submit-ct600.post.ts.
       const res = await $fetch<{ id: string }>('/api/hmrc/submit-ct600', {
         method: 'POST',
         body: {
@@ -624,14 +581,10 @@ export function useFilingWizard() {
     }
   }
 
-  /** Submits the accounts iXBRL to Companies House's real XML Gateway
-   *  (see app/domain/filing/companiesHouseGovTalk.ts) — Class AA,
-   *  GatewayTest-flagged, MD5-hashed presenter authentication. Unlike
-   *  submitToHmrc, the envelope is built entirely server-side now: the
-   *  Presenter ID / Presenter Authentication Code / Package Reference are
-   *  TaxInANutshell's own credentials (server env vars), not the filer's,
-   *  so they never pass through the browser — only the Company
-   *  Authentication Code and contact email do. */
+  /** Submits accounts iXBRL to Companies House's XML Gateway (Class AA,
+   *  see companiesHouseGovTalk.ts). Envelope is built server-side; only the
+   *  Company Authentication Code and contact email pass through the browser
+   *  — TaxInANutshell's own presenter credentials stay server-side. */
   async function submitToCompaniesHouse() {
     state.chSubmitting = true
     try {
@@ -659,16 +612,14 @@ export function useFilingWizard() {
     }
   }
 
-  /** Called on the receipt page mount/reload — just reads back whatever
-   *  status is already on record, no gateway calls. */
+  /** Reads back whatever status is on record, no gateway calls. */
   async function refreshSubmissionStatus(id: string) {
     const res = await $fetch<{ row: SubmissionRowDto }>(`/api/submissions/${id}`)
     applySubmissionRow(res.row)
   }
 
-  /** Actively polls HMRC for a still-processing submission — needs the
-   *  Government Gateway credentials again (GovTalk polls are
-   *  authenticated the same way as the original submission). */
+  /** Polls HMRC for a still-processing submission — needs Gateway
+   *  credentials again, same as the original submission. */
   async function pollHmrcStatus() {
     if (!state.submissionId) return
     const res = await $fetch<{ row: SubmissionRowDto }>('/api/hmrc/poll-ct600', {
@@ -678,10 +629,9 @@ export function useFilingWizard() {
     applySubmissionRow(res.row)
   }
 
-  /** Actively polls Companies House for a still-processing accounts
-   *  submission — unlike pollHmrcStatus, needs no credentials from the
-   *  browser: the presenter identity is TaxInANutshell's own, read
-   *  server-side from env vars (see poll-accounts.post.ts). */
+  /** Polls Companies House for a still-processing submission — unlike
+   *  pollHmrcStatus, needs no browser credentials (presenter identity is
+   *  server-side, see poll-accounts.post.ts). */
   async function pollCompaniesHouseStatus() {
     if (!state.submissionId) return
     const res = await $fetch<{ row: SubmissionRowDto }>('/api/companies-house/poll-accounts', {
@@ -692,11 +642,8 @@ export function useFilingWizard() {
   }
 
   // --- Guided balance-sheet entry ---
-  // Flattens GUIDED_BALANCE_FIELDS into the actual question sequence —
-  // each line's current-year question, immediately followed by its
-  // prior-year comparative question, but only once firstPeriod says
-  // there is a prior year to ask about (same gate as the table view's
-  // second column).
+  // Flattens GUIDED_BALANCE_FIELDS into current-year + comparative question
+  // pairs, comparative only when firstPeriod !== 'yes'.
   const guidedSteps = computed(() => {
     const steps: Array<{ key: FieldKey; label: string; help: string; isComparative: boolean }> = []
     for (const field of GUIDED_BALANCE_FIELDS) {

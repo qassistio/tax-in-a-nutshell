@@ -1,22 +1,15 @@
-// Builds the GovTalk envelope (see app/domain/filing/govTalk.ts) and
-// proxies it to HMRC's CT submission gateway, recording the resulting
-// submission status against a GUID keyed row in the local SQLite store
-// (see server/utils/db.ts) — status metadata only, no accounting figures.
+// Builds the GovTalk envelope (govTalk.ts) and proxies it to HMRC's CT
+// gateway, recording status against a GUID-keyed row (server/utils/db.ts)
+// — status metadata only.
 //
-// The envelope is built here rather than in the browser specifically so
-// the message Class (Test-In-Live vs live — see hmrcTestInLive in
-// nuxt.config.ts) is a server-only decision the filer can't override; the
-// browser only supplies the IRenvelope body content and a pre-computed
-// IRmark (see compute-irmark.post.ts) plus the Government Gateway
-// credentials, which still come from the browser per-request and are
-// never stored.
+// Envelope is built here, not in the browser, so the message Class
+// (Test-In-Live vs live — hmrcTestInLive) is a server-only decision; the
+// browser supplies the IRenvelope body, a pre-computed IRmark
+// (compute-irmark.post.ts) and Gateway credentials per-request, never stored.
 //
-// GovTalk is asynchronous: the immediate response is normally an
-// `acknowledgement` carrying a CorrelationID and a poll endpoint, not the
-// real accept/reject — that only arrives once /api/hmrc/poll-ct600 is
-// called against the stored CorrelationID. This route stores whatever
-// state that first response leaves us in and returns the submission id
-// for the browser to poll against.
+// GovTalk is asynchronous: the immediate reply is normally an
+// `acknowledgement` with a CorrelationID + poll endpoint, not the real
+// accept/reject — that arrives once /api/hmrc/poll-ct600 is called.
 
 import { createHash } from 'node:crypto'
 import { createSubmission, updateSubmission } from '../../utils/db'
@@ -38,8 +31,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const config = useRuntimeConfig()
-  // Server-controlled, not client-supplied — see the hmrcTestInLive
-  // comment in nuxt.config.ts.
+  // Server-controlled, not client-supplied — see hmrcTestInLive in nuxt.config.ts.
   const messageClass: CtMessageClass = (config.hmrcTestInLive as boolean) ? 'HMRC-CT-CT600-TIL' : 'HMRC-CT-CT600'
 
   const envelopeXml = buildGovTalkEnvelope({
@@ -51,9 +43,7 @@ export default defineEventHandler(async (event) => {
     bodyXml: body.bodyXml,
     irMark: body.irMark
   })
-  // SHA-256 of the exact bytes sent — requirements.md §29's "payload
-  // hashes" — computed here now that the envelope itself is assembled
-  // server-side, rather than being handed a pre-computed hash to trust.
+  // SHA-256 of the exact bytes sent (requirements.md §29's "payload hashes").
   const payloadHash = createHash('sha256').update(envelopeXml, 'utf8').digest('hex')
 
   const id = crypto.randomUUID()

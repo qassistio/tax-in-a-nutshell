@@ -99,18 +99,12 @@ export const MICRO_ENTITY_TURNOVER_LIMIT = 632_000
 export const MICRO_ENTITY_BALANCE_SHEET_LIMIT = 316_000
 export const MICRO_ENTITY_EMPLOYEE_LIMIT = 10
 
-/** Every monetary line on the balance sheet, profit and loss account and
- *  tax computation. A blank box is never treated as £0 — nil is a figure
- *  the preparer has to enter deliberately, same as on the real forms,
- *  so a line left blank is an error rather than a silent assumption.
+/** Every monetary line on the balance sheet, P&L and tax computation. A
+ *  blank box is never treated as £0 — nil must be entered deliberately.
  *
- *  Prior-year comparative figures (requirements.md §11) sit alongside
- *  their current-year counterpart — same `step` as the line they compare
- *  against, since both columns are entered on the same balance
- *  sheet/P&L screen (an accountant expects a two-column table, not a
- *  separate screen) — flagged `comparative: true` so
- *  findMissingAmountFields can skip them for a first accounting period,
- *  which has nothing to compare to. */
+ *  Comparatives (requirements.md §11) share their current-year line's
+ *  `step` (same two-column screen) and are flagged `comparative: true` so
+ *  findMissingAmountFields can skip them for a first accounting period. */
 export const REQUIRED_AMOUNT_FIELDS: Array<{ key: string; label: string; step: string; comparative?: boolean }> = [
   { key: 'unpaidCapital', label: 'Called up share capital not paid', step: 'balance' },
   { key: 'fixedAssets', label: 'Fixed assets', step: 'balance' },
