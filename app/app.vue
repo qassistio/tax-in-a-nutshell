@@ -61,8 +61,9 @@ const stepComponents: Record<StepId, Component> = {
             'is-warn': wizard.stepStatus(step) === 'warn'
           }"
         >
-          <template v-if="wizard.stepStatus(step) === 'done'">✓</template>
-          <template v-else-if="wizard.stepStatus(step) === 'error'">!</template>
+          <AppIcon v-if="wizard.stepStatus(step) === 'done'" name="check" :size="12" weight="fill" />
+          <AppIcon v-else-if="wizard.stepStatus(step) === 'error'" name="error" :size="12" weight="fill" />
+          <AppIcon v-else-if="wizard.stepStatus(step) === 'warn'" name="warn" :size="12" weight="fill" />
         </span>
         {{ STEP_LABELS[step] }}
       </button>

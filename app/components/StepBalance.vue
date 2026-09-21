@@ -16,7 +16,7 @@ const { state, f, balance } = props.wizard
       <label class="seg-opt"><input v-model="state.balanceEntryMode" type="radio" value="table"><span>Enter as a table</span></label>
       <label class="seg-opt"><input v-model="state.balanceEntryMode" type="radio" value="guided"><span>Guide me through it</span></label>
     </div>
-    <button type="button" class="btn btn-ghost" @click="wizard.importOpenDialog()">Import trial balance…</button>
+    <button type="button" class="btn btn-ghost" @click="wizard.importOpenDialog()"><AppIcon name="upload" :size="16" />Import trial balance…</button>
   </div>
 
   <template v-if="state.balanceEntryMode === 'table'">
@@ -95,7 +95,7 @@ const { state, f, balance } = props.wizard
   </template>
 
   <div class="step-footer">
-    <button type="button" class="btn btn-secondary" @click="wizard.move(-1)">Back</button>
-    <button type="button" class="btn btn-primary" @click="wizard.move(1)">Continue</button>
+    <button type="button" class="btn btn-secondary" @click="wizard.move(-1)"><AppIcon name="back" :size="14" />Back</button>
+    <button type="button" class="btn btn-primary" @click="wizard.move(1)">Continue<AppIcon name="forward" :size="14" /></button>
   </div>
 </template>

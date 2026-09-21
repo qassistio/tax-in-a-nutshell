@@ -4,8 +4,12 @@ import type { useFilingWizard } from '../composables/useFilingWizard'
 const props = defineProps<{ wizard: ReturnType<typeof useFilingWizard> }>()
 const { state, f, canSubmit } = props.wizard
 
-function submit() {
-  if (canSubmit.value) props.wizard.move(1)
+async function submit() {
+  if (!canSubmit.value) return
+  await props.wizard.approveFiling()
+  if (state.filings.ct600) await props.wizard.submitToHmrc()
+  if (state.filings.companiesHouse) await props.wizard.prepareCompaniesHouse()
+  props.wizard.move(1)
 }
 </script>
 
@@ -40,15 +44,36 @@ function submit() {
       <label for="gwPass">Government Gateway password</label>
       <input id="gwPass" v-model="f.gwPass" type="password" class="input" autocomplete="off">
     </div>
+    <div class="field">
+      <label for="vendorId">HMRC vendor ID</label>
+      <input id="vendorId" v-model="state.vendorId" class="input" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="testInLive">Submission mode</label>
+      <select id="testInLive" v-model="state.testInLive" class="input">
+        <option :value="true">Test-in-live (HMRC-CT-CT600-TIL)</option>
+        <option :value="false">Live (HMRC-CT-CT600)</option>
+      </select>
+    </div>
   </div>
+  <p class="text-muted" style="font-size:13px;">
+    This calls HMRC's real GovTalk submission gateway with the envelope built in this browser. It has not been
+    verified end-to-end against a live Government Gateway account — leave submission mode on Test-in-live until
+    you've checked a real response.
+  </p>
 
   <label class="radio" style="margin-top: var(--space-4);">
     <input v-model="state.declarationAgreed" type="checkbox">
     <span>I confirm the information given is correct and complete, and I am authorised to make this declaration.</span>
   </label>
 
+  <p v-if="state.submitError" class="tag tag-accent-2" style="margin-top: var(--space-3);">{{ state.submitError }}</p>
+
   <div class="step-footer">
-    <button type="button" class="btn btn-secondary" @click="wizard.move(-1)">Back</button>
-    <button type="button" class="btn btn-primary" :disabled="!canSubmit" @click="submit">Submit</button>
+    <button type="button" class="btn btn-secondary" @click="wizard.move(-1)"><AppIcon name="back" :size="14" />Back</button>
+    <button type="button" class="btn btn-primary" :disabled="!canSubmit || state.submitting" @click="submit">
+      <AppIcon v-if="state.submitting" name="spinner" :size="14" />
+      {{ state.submitting ? 'Submitting…' : 'Submit' }}
+    </button>
   </div>
 </template>

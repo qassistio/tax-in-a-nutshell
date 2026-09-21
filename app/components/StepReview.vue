@@ -4,7 +4,7 @@ import { formatPounds } from '../domain/accounting/totals'
 import type { StepId } from '../composables/useFilingWizard'
 
 const props = defineProps<{ wizard: ReturnType<typeof useFilingWizard> }>()
-const { f, balance, pnl, corporationTax, problems, STEP_LABELS } = props.wizard
+const { f, balance, pnl, corporationTax, problems, STEP_LABELS, figureTrail } = props.wizard
 
 function goTo(step: string) {
   props.wizard.go(step as StepId)
@@ -49,6 +49,15 @@ function goTo(step: string) {
   <template v-if="props.wizard.state.filings.ct600">
     <h4>Corporation Tax</h4>
     <p>Taxable total profits £{{ formatPounds(corporationTax.taxableTotalProfits) }} · Tax due £{{ formatPounds(corporationTax.corporationTax) }} ({{ corporationTax.rates.version }})</p>
+
+    <h4>Where the taxable profit figure comes from</h4>
+    <ol class="audit-trail">
+      <li v-for="step in figureTrail" :key="step.label">
+        <strong>{{ step.label }}</strong>
+        <span v-if="step.amount !== undefined"> — £{{ formatPounds(step.amount) }}</span>
+        <br><span class="text-muted" style="font-size: 13px;">{{ step.detail }}</span>
+      </li>
+    </ol>
   </template>
 
   <div class="step-footer">

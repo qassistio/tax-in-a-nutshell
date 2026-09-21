@@ -14,6 +14,7 @@ const { state } = props.wizard
 
   <label class="filing-choice">
     <input v-model="state.filings.accounts" type="checkbox">
+    <AppIcon name="document" :size="22" />
     <span>
       <strong>Micro-entity accounts</strong><br>
       <span class="text-muted">A balance sheet and profit and loss account, prepared under FRS 105.</span>
@@ -21,6 +22,7 @@ const { state } = props.wizard
   </label>
   <label class="filing-choice">
     <input v-model="state.filings.ct600" type="checkbox">
+    <AppIcon name="bank" :size="22" />
     <span>
       <strong>Company Tax Return (CT600)</strong><br>
       <span class="text-muted">Corporation Tax computation and return, filed with HMRC.</span>
@@ -28,6 +30,7 @@ const { state } = props.wizard
   </label>
   <label class="filing-choice">
     <input v-model="state.filings.companiesHouse" type="checkbox">
+    <AppIcon name="company" :size="22" />
     <span>
       <strong>File accounts with Companies House</strong><br>
       <span class="text-muted">Sends the same accounts on to the public register.</span>
@@ -41,6 +44,6 @@ const { state } = props.wizard
 
   <div class="step-footer">
     <span />
-    <button type="button" class="btn btn-primary" @click="wizard.move(1)">Start</button>
+    <button type="button" class="btn btn-primary" @click="wizard.move(1)">Start<AppIcon name="forward" :size="14" /></button>
   </div>
 </template>

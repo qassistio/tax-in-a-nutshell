@@ -38,7 +38,7 @@ const { f } = props.wizard
   </div>
 
   <div class="step-footer">
-    <button type="button" class="btn btn-secondary" @click="wizard.move(-1)">Back</button>
-    <button type="button" class="btn btn-primary" @click="wizard.move(1)">Continue</button>
+    <button type="button" class="btn btn-secondary" @click="wizard.move(-1)"><AppIcon name="back" :size="14" />Back</button>
+    <button type="button" class="btn btn-primary" @click="wizard.move(1)">Continue<AppIcon name="forward" :size="14" /></button>
   </div>
 </template>

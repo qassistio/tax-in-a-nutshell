@@ -10,6 +10,18 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/broadsheet.css'],
 
+  // Server-side only: the HMRC vendor ID identifies this piece of
+  // software to the gateway, it is not a user secret. Government Gateway
+  // credentials and the constructed submission body are supplied
+  // per-request from the browser and never stored — see
+  // server/api/hmrc/submit-ct600.post.ts.
+  // Overridable via NUXT_HMRC_VENDOR_ID / NUXT_HMRC_GATEWAY_URL env vars —
+  // Nuxt maps runtimeConfig keys to NUXT_<KEY> automatically.
+  runtimeConfig: {
+    hmrcVendorId: '',
+    hmrcGatewayUrl: 'https://transaction-engine.tax.service.gov.uk/submission'
+  },
+
   app: {
     head: {
       title: 'TaxInANutshell',

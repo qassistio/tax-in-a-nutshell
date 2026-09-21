@@ -4,6 +4,13 @@ import { balanceSheetTotals, profitAndLossTotals, parsePounds, formatPounds } fr
 import { ratesFor, calculateCorporationTax } from '../domain/tax/corporationTax'
 import { calculateDeadlines } from '../domain/filing/deadlines'
 import { findProblems, findMissingAmountFields, MICRO_ENTITY_TURNOVER_LIMIT } from '../domain/validation/problems'
+import { createAuditEntry, buildTaxableProfitTrail, type AuditEntry, type AuditCategory } from '../domain/audit/auditTrail'
+import { hashArtefacts, createApprovalRecord, isApprovalStale, type ApprovalRecord } from '../domain/filing/approval'
+import type { GatewayReceipt } from '../domain/filing/submissionStatus'
+import { computeIRmark, buildGovTalkEnvelope, type CtMessageClass } from '../domain/filing/govTalk'
+import { generateAccountsIxbrl } from '../domain/ixbrl/accountsIxbrl'
+import { generateTaxComputationIxbrl } from '../domain/ixbrl/taxComputationIxbrl'
+import { diffFields, createAmendment, type Amendment } from '../domain/filing/amendments'
 
 export type StepId =
   | 'start' | 'company' | 'period' | 'balance' | 'pnl' | 'tax' | 'notes' | 'review' | 'declaration' | 'receipt'
@@ -66,8 +73,47 @@ export function useFilingWizard() {
     importStage: 'drop' as 'drop' | 'map',
     importFileName: '',
     importRows: [] as import('../domain/accounting/trialBalanceImport').TrialBalanceRow[],
-    declarationAgreed: false
+    importedFileName: '',
+    declarationAgreed: false,
+    auditLog: [] as AuditEntry[],
+    approval: null as ApprovalRecord | null,
+    vendorId: '',
+    testInLive: true,
+    hmrcReceipt: null as GatewayReceipt | null,
+    chReceipt: null as GatewayReceipt | null,
+    submitting: false,
+    submitError: '',
+    amendments: [] as Amendment[]
   })
+
+  const AMENDABLE_FIELD_LABELS: Record<string, string> = {
+    turnover: 'Turnover', otherIncome: 'Other income', rawMaterials: 'Cost of raw materials',
+    staffCosts: 'Staff costs', depreciation: 'Depreciation', otherCharges: 'Other charges',
+    fixedAssets: 'Fixed assets', currentAssets: 'Current assets', retained: 'Retained earnings',
+    addDepreciation: 'Depreciation added back', addEntertaining: 'Entertaining added back',
+    capAllowances: 'Capital allowances'
+  }
+
+  /** requirements.md §31 — chains a new Amendment from a previously
+   *  downloaded receipt (re-supplied by the user, since nothing persists
+   *  server-side) against the current, in-progress figures. */
+  async function createAmendmentFromReceipt(previousReceiptJson: string, reason: string): Promise<Amendment> {
+    const previous = JSON.parse(previousReceiptJson) as { fields: Record<string, string>; corporationTax?: number }
+    const previousReceiptHash = await hashArtefacts(previous as unknown as Record<string, unknown>)
+    const changes = diffFields(previous.fields, f as unknown as Record<string, string>, AMENDABLE_FIELD_LABELS)
+    const taxDifference = corporationTax.value.corporationTax - (previous.corporationTax ?? corporationTax.value.corporationTax)
+    const amendment = createAmendment({
+      sequence: state.amendments.length + 1,
+      reason, changes, taxDifference, previousReceiptHash
+    })
+    state.amendments.push(amendment)
+    logEvent('amendment', `Amendment ${amendment.sequence} created: ${changes.length} field(s) changed, tax difference £${taxDifference}.`)
+    return amendment
+  }
+
+  function logEvent(category: AuditCategory, message: string) {
+    state.auditLog.push(createAuditEntry(category, message))
+  }
 
   const f = emptyFields()
 
@@ -152,6 +198,138 @@ export function useFilingWizard() {
 
   const canSubmit = computed(() => problems.value.every(p => p.sev !== 'error') && state.declarationAgreed)
 
+  // --- Audit trail ---
+  const figureTrail = computed(() => buildTaxableProfitTrail({
+    taxableTotalProfits: taxableTotalProfits.value,
+    profitBeforeTax: pnl.value.profitBeforeTax,
+    addDepreciation: parsePounds(f.addDepreciation),
+    addEntertaining: parsePounds(f.addEntertaining),
+    capAllowances: parsePounds(f.capAllowances),
+    importedFrom: state.importedFileName
+      ? { fileName: state.importedFileName, rowCount: state.importRows.length }
+      : undefined
+  }))
+
+  // --- Approval (requirements.md §23) ---
+  const approvalArtefacts = computed(() => ({ f: { ...f }, filings: { ...state.filings } }))
+
+  async function currentArtefactHash() {
+    return hashArtefacts(approvalArtefacts.value)
+  }
+
+  async function approveFiling() {
+    const hash = await currentArtefactHash()
+    state.approval = createApprovalRecord({
+      approver: f.declName || f.approver,
+      role: f.declRole || 'Director',
+      accountsRulesVersion: 'FRS 105 2024',
+      corporationTaxRulesVersion: rates.value.version,
+      artefactHash: hash
+    })
+    logEvent('approval', `Approved by ${state.approval.approver} (${state.approval.role}).`)
+  }
+
+  async function checkApprovalStale(): Promise<boolean> {
+    const hash = await currentArtefactHash()
+    return isApprovalStale(state.approval, hash)
+  }
+
+  // --- iXBRL generation (requirements.md §19/§20) ---
+  const company = computed(() => ({
+    companyName: f.companyName, companyNumber: f.companyNumber, utr: f.utr,
+    address: f.address, postcode: f.postcode, sic: f.sic
+  }))
+  const period = computed(() => ({
+    periodStart: f.periodStart, periodEnd: f.periodEnd, firstPeriod: f.firstPeriod === 'yes'
+  }))
+  const adjustments = computed(() => ({
+    addDepreciation: parsePounds(f.addDepreciation), addEntertaining: parsePounds(f.addEntertaining),
+    capAllowances: parsePounds(f.capAllowances), associatedCompanies: parsePounds(f.associated)
+  }))
+
+  const accountsIxbrl = computed(() => generateAccountsIxbrl({
+    company: company.value, period: period.value,
+    balance: {
+      unpaidCapital: parsePounds(f.unpaidCapital), fixedAssets: parsePounds(f.fixedAssets),
+      currentAssets: parsePounds(f.currentAssets), prepayments: parsePounds(f.prepayments),
+      creditorsWithin: parsePounds(f.creditorsWithin), creditorsAfter: parsePounds(f.creditorsAfter),
+      provisions: parsePounds(f.provisions), shareCapital: parsePounds(f.shareCapital), retained: parsePounds(f.retained)
+    },
+    pnl: {
+      turnover: parsePounds(f.turnover), otherIncome: parsePounds(f.otherIncome),
+      rawMaterials: parsePounds(f.rawMaterials), staffCosts: parsePounds(f.staffCosts),
+      depreciation: parsePounds(f.depreciation), otherCharges: parsePounds(f.otherCharges)
+    }
+  }))
+
+  const taxComputationIxbrl = computed(() => generateTaxComputationIxbrl({
+    company: company.value, period: period.value,
+    profitBeforeTax: pnl.value.profitBeforeTax,
+    adjustments: adjustments.value,
+    result: corporationTax.value
+  }))
+
+  // --- HMRC submission (requirements.md §19; legacy GovTalk/XML gateway) ---
+  async function submitToHmrc() {
+    state.submitting = true
+    state.submitError = ''
+    try {
+      const messageClass: CtMessageClass = state.testInLive ? 'HMRC-CT-CT600-TIL' : 'HMRC-CT-CT600'
+      const bodyXml = `<CompanyTaxReturn><TaxComputation><![CDATA[${taxComputationIxbrl.value}]]></TaxComputation></CompanyTaxReturn>`
+      const irMark = await computeIRmark(bodyXml)
+      const envelopeXml = buildGovTalkEnvelope({
+        messageClass,
+        credentials: { gatewayUserId: f.gwUser, gatewayPassword: f.gwPass, vendorId: state.vendorId },
+        companyUtr: f.utr, companyName: f.companyName, periodEnd: f.periodEnd,
+        bodyXml, irMark
+      })
+
+      const res = await $fetch<{ ok: boolean; httpStatus: number; rawResponse: string }>('/api/hmrc/submit-ct600', {
+        method: 'POST',
+        body: { envelopeXml }
+      })
+
+      state.hmrcReceipt = {
+        target: 'hmrc',
+        status: res.ok ? 'submitted' : 'rejected',
+        irMark,
+        timestamp: new Date().toISOString(),
+        rawResponse: res.rawResponse,
+        message: res.ok ? `HTTP ${res.httpStatus} from HMRC gateway.` : `HMRC gateway returned HTTP ${res.httpStatus}.`
+      }
+      logEvent('submission', res.ok
+        ? `Submitted to HMRC gateway (${messageClass}).`
+        : `HMRC gateway submission failed with HTTP ${res.httpStatus}.`)
+    } catch (err) {
+      state.submitError = (err as Error).message || 'Could not reach the HMRC gateway.'
+      state.hmrcReceipt = { target: 'hmrc', status: 'rejected', timestamp: new Date().toISOString(), message: state.submitError }
+      logEvent('submission', `HMRC submission failed: ${state.submitError}`)
+    } finally {
+      state.submitting = false
+    }
+  }
+
+  async function prepareCompaniesHouse() {
+    try {
+      const res = await $fetch<{ ok: boolean; channel: string; message: string }>('/api/companies-house/prepare-accounts', {
+        method: 'POST',
+        body: { accountsIxbrl: accountsIxbrl.value, companyNumber: f.companyNumber }
+      })
+      state.chReceipt = {
+        target: 'companiesHouse',
+        status: 'created',
+        timestamp: new Date().toISOString(),
+        message: res.message
+      }
+      logEvent('submission', 'Accounts iXBRL prepared for Companies House filing (no third-party accounts API is available yet).')
+    } catch (err) {
+      state.chReceipt = {
+        target: 'companiesHouse', status: 'rejected', timestamp: new Date().toISOString(),
+        message: (err as Error).message
+      }
+    }
+  }
+
   // --- Guided balance-sheet entry ---
   const guidedField = computed(() => GUIDED_BALANCE_FIELDS[state.guidedIdx] ?? GUIDED_BALANCE_FIELDS[0]!)
   const guidedTotal = GUIDED_BALANCE_FIELDS.length
@@ -174,6 +352,7 @@ export function useFilingWizard() {
     state.importFileName = file.name
     state.importRows = parseTrialBalanceCsv(text)
     state.importStage = 'map'
+    logEvent('import', `Imported trial balance from ${file.name} (${state.importRows.length} rows).`)
   }
   async function importApply() {
     const { summariseTrialBalance } = await import('../domain/accounting/trialBalanceImport')
@@ -181,7 +360,9 @@ export function useFilingWizard() {
     for (const [key, value] of Object.entries(totals)) {
       if (key in f) (f as Record<string, string>)[key] = String(Math.round(value as number))
     }
+    state.importedFileName = state.importFileName
     state.importOpen = false
+    logEvent('mapping', `Mapped ${state.importRows.length} ledger accounts to ${Object.keys(totals).length} return fields.`)
   }
 
   return {
@@ -192,6 +373,11 @@ export function useFilingWizard() {
     problems, errorSteps, warnSteps, canSubmit,
     GUIDED_BALANCE_FIELDS, guidedField, guidedTotal, guidedNext, guidedBack,
     importOpenDialog, importClose, importFile, importApply,
-    formatPounds
+    formatPounds,
+    logEvent, figureTrail,
+    approveFiling, checkApprovalStale,
+    accountsIxbrl, taxComputationIxbrl,
+    submitToHmrc, prepareCompaniesHouse,
+    createAmendmentFromReceipt
   }
 }
