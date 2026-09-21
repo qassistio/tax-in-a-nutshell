@@ -10,13 +10,14 @@ import { createHash } from 'node:crypto'
 import { getSubmission, updateSubmission, nextChTransactionId } from '../../utils/db'
 import { buildCompaniesHouseStatusPollEnvelope, parseCompaniesHouseStatusPollResponse } from '../../../app/domain/filing/companiesHouseGovTalk'
 
-/** Maps Companies House's raw poll status terms onto this app's
+/** Maps Companies House's raw <StatusCode> (ACCEPT/REJECT/PENDING/PARKED,
+ *  per its published GetSubmissionStatus example) onto this app's
  *  SubmissionStatus union (see app/domain/filing/submissionStatus.ts). */
 function mapChStatus(raw: string | undefined, rejectMessage: string | undefined): { status: string; message: string } {
   switch (raw?.toLowerCase()) {
-    case 'accepted':
+    case 'accept':
       return { status: 'accepted', message: 'Companies House has accepted the accounts.' }
-    case 'rejected':
+    case 'reject':
       return { status: 'rejected', message: rejectMessage || 'Companies House rejected the accounts.' }
     case 'pending':
       return { status: 'submitted', message: 'Still being processed by Companies House.' }

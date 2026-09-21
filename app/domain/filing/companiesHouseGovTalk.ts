@@ -26,6 +26,16 @@
 // best-effort draft — verify against the real schema
 // (http://xmlgw.companieshouse.gov.uk/SchemaStatus) before live use, same
 // caveat as govTalk.ts's HMRC envelope.
+//
+// The <SenderID>/<Authentication><Method>clear</Method><Value> shape and
+// the GetSubmissionStatus response shape (<StatusCode>,
+// <Rejections><Reject><Description>) below WERE checked against CH's own
+// published example (xmlgw.companieshouse.gov.uk/examples/
+// GetSubmissionStatus_response.xml) and its XML Gateway forum as of
+// 2026-09-21 — see also TIS v5.3 §2.5.1: GetStatusAck is only required
+// after GetSubmissionStatus options 2/3 (bulk poll), not option 1 (a
+// specific SubmissionNumber, what this app uses), so no ack step is
+// needed here.
 
 export interface CompaniesHouseCredentials {
   /** Proves authority to file for this company, issued by CH to the
@@ -214,19 +224,29 @@ export function parseCompaniesHouseResponse(xml: string): ChGovTalkParsedRespons
 
 export interface ChStatusPollResult {
   submissionNumber?: string
-  /** Raw CH term (accepted/rejected/pending/parked, TIS v5.3 §2.5) — the
-   *  caller maps this onto SubmissionStatus, same as HMRC's parser. */
+  /** Raw CH code — <StatusCode>ACCEPT|REJECT|PENDING|PARKED</StatusCode>
+   *  (TIS v5.3 §2.5's "accepted/rejected/pending/parked" prose, but that's
+   *  the actual element/value CH returns per its published example at
+   *  xmlgw.companieshouse.gov.uk/examples/GetSubmissionStatus_response.xml
+   *  — the caller maps this onto SubmissionStatus, same as HMRC's parser). */
   status?: string
   rejectMessage?: string
 }
 
 /** Parses a GetSubmissionStatus poll response — distinct from
- *  parseCompaniesHouseResponse since status/Reject_message sit in the
- *  response body, not at envelope-error level. */
+ *  parseCompaniesHouseResponse since these sit inside <Body><SubmissionStatus>
+ *  rather than at envelope-error level. Reject detail lives in
+ *  <Rejections><Reject><Description> (possibly more than one <Reject>), not
+ *  a flat <Reject_message> — that name is HMRC's (see govTalk.ts), not CH's. */
 export function parseCompaniesHouseStatusPollResponse(xml: string): ChStatusPollResult {
+  const rejectBlocks = [...xml.matchAll(/<Reject>([\s\S]*?)<\/Reject>/g)].map(m => m[1]!)
+  const rejectMessage = rejectBlocks.length
+    ? rejectBlocks.map(block => extractTag(block, 'Description')).filter(Boolean).join('; ')
+    : undefined
+
   return {
     submissionNumber: extractTag(xml, 'SubmissionNumber'),
-    status: extractTag(xml, 'status') ?? extractTag(xml, 'Status'),
-    rejectMessage: extractTag(xml, 'Reject_message')
+    status: extractTag(xml, 'StatusCode'),
+    rejectMessage
   }
 }
