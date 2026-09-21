@@ -34,6 +34,10 @@ export interface GatewayReceipt {
   submissionId?: string
   correlationId?: string
   irMark?: string
+  /** SHA-256 of the exact envelope/iXBRL bytes sent — requirements.md §29
+   *  ("payload hashes") so a filing can be proven to be exactly what was
+   *  submitted, without keeping the payload itself. */
+  payloadHash?: string
   timestamp: string
   rawResponse?: string
   message?: string

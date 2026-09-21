@@ -7,10 +7,27 @@ import { findProblems, findMissingAmountFields, MICRO_ENTITY_TURNOVER_LIMIT } fr
 import { createAuditEntry, buildTaxableProfitTrail, type AuditEntry, type AuditCategory } from '../domain/audit/auditTrail'
 import { hashArtefacts, createApprovalRecord, isApprovalStale, type ApprovalRecord } from '../domain/filing/approval'
 import type { GatewayReceipt } from '../domain/filing/submissionStatus'
-import { computeIRmark, buildGovTalkEnvelope, type CtMessageClass } from '../domain/filing/govTalk'
+import { computeIRmark, buildGovTalkEnvelope, parseGovTalkResponse, type CtMessageClass } from '../domain/filing/govTalk'
 import { generateAccountsIxbrl } from '../domain/ixbrl/accountsIxbrl'
 import { generateTaxComputationIxbrl } from '../domain/ixbrl/taxComputationIxbrl'
 import { diffFields, createAmendment, type Amendment } from '../domain/filing/amendments'
+import { translateGovTalkErrors, type TranslatedError } from '../domain/filing/rejectionMessages'
+
+/** Shape returned by the submission-status server routes — snake_case
+ *  because it mirrors the SQLite row directly (server/utils/db.ts). */
+interface SubmissionRowDto {
+  id: string
+  hmrc_status: string
+  hmrc_correlation_id: string | null
+  hmrc_submission_id: string | null
+  hmrc_irmark: string | null
+  hmrc_payload_hash: string | null
+  hmrc_raw_response: string | null
+  hmrc_message: string | null
+  ch_status: string | null
+  ch_message: string | null
+  updated_at: string
+}
 
 export type StepId =
   | 'start' | 'company' | 'period' | 'balance' | 'pnl' | 'tax' | 'notes' | 'review' | 'declaration' | 'receipt'
@@ -83,7 +100,9 @@ export function useFilingWizard() {
     chReceipt: null as GatewayReceipt | null,
     submitting: false,
     submitError: '',
-    amendments: [] as Amendment[]
+    amendments: [] as Amendment[],
+    submissionId: '',
+    rejectionDetails: [] as TranslatedError[]
   })
 
   const AMENDABLE_FIELD_LABELS: Record<string, string> = {
@@ -95,8 +114,9 @@ export function useFilingWizard() {
   }
 
   /** requirements.md §31 — chains a new Amendment from a previously
-   *  downloaded receipt (re-supplied by the user, since nothing persists
-   *  server-side) against the current, in-progress figures. */
+   *  downloaded receipt (re-supplied by the user, since only a submission
+   *  status record persists server-side — no accounting figures) against
+   *  the current, in-progress figures. */
   async function createAmendmentFromReceipt(previousReceiptJson: string, reason: string): Promise<Amendment> {
     const previous = JSON.parse(previousReceiptJson) as { fields: Record<string, string>; corporationTax?: number }
     const previousReceiptHash = await hashArtefacts(previous as unknown as Record<string, unknown>)
@@ -269,7 +289,42 @@ export function useFilingWizard() {
     result: corporationTax.value
   }))
 
-  // --- HMRC submission (requirements.md §19; legacy GovTalk/XML gateway) ---
+  /** Maps the SQLite-backed status row onto the two GatewayReceipt values
+   *  the UI reads, and re-derives plain-English rejection messages
+   *  (requirements.md §30) from whatever raw GovTalk error text is on
+   *  record. */
+  function applySubmissionRow(row: SubmissionRowDto) {
+    state.submissionId = row.id
+    state.hmrcReceipt = {
+      target: 'hmrc',
+      status: row.hmrc_status as GatewayReceipt['status'],
+      correlationId: row.hmrc_correlation_id ?? undefined,
+      submissionId: row.hmrc_submission_id ?? undefined,
+      irMark: row.hmrc_irmark ?? undefined,
+      payloadHash: row.hmrc_payload_hash ?? undefined,
+      rawResponse: row.hmrc_raw_response ?? undefined,
+      message: row.hmrc_message ?? undefined,
+      timestamp: row.updated_at
+    }
+    state.rejectionDetails = row.hmrc_status === 'rejected' && row.hmrc_raw_response
+      ? translateGovTalkErrors(parseGovTalkErrorsFromRaw(row.hmrc_raw_response))
+      : []
+    if (row.ch_status) {
+      state.chReceipt = {
+        target: 'companiesHouse',
+        status: row.ch_status as GatewayReceipt['status'],
+        message: row.ch_message ?? undefined,
+        timestamp: row.updated_at
+      }
+    }
+  }
+
+  function parseGovTalkErrorsFromRaw(rawResponse: string) {
+    const parsed = parseGovTalkResponse(rawResponse)
+    return parsed.qualifier === 'error' ? parsed.errors : []
+  }
+
+  // --- HMRC submission (requirements.md §19/§24; legacy GovTalk/XML gateway) ---
   async function submitToHmrc() {
     state.submitting = true
     state.submitError = ''
@@ -283,23 +338,16 @@ export function useFilingWizard() {
         companyUtr: f.utr, companyName: f.companyName, periodEnd: f.periodEnd,
         bodyXml, irMark
       })
+      const payloadHash = await hashArtefacts({ envelopeXml })
 
-      const res = await $fetch<{ ok: boolean; httpStatus: number; rawResponse: string }>('/api/hmrc/submit-ct600', {
+      const res = await $fetch<{ id: string }>('/api/hmrc/submit-ct600', {
         method: 'POST',
-        body: { envelopeXml }
+        body: { envelopeXml, companyName: f.companyName, periodEnd: f.periodEnd, messageClass, irMark, payloadHash }
       })
 
-      state.hmrcReceipt = {
-        target: 'hmrc',
-        status: res.ok ? 'submitted' : 'rejected',
-        irMark,
-        timestamp: new Date().toISOString(),
-        rawResponse: res.rawResponse,
-        message: res.ok ? `HTTP ${res.httpStatus} from HMRC gateway.` : `HMRC gateway returned HTTP ${res.httpStatus}.`
-      }
-      logEvent('submission', res.ok
-        ? `Submitted to HMRC gateway (${messageClass}).`
-        : `HMRC gateway submission failed with HTTP ${res.httpStatus}.`)
+      const status = await $fetch<{ row: SubmissionRowDto }>(`/api/submissions/${res.id}`)
+      applySubmissionRow(status.row)
+      logEvent('submission', `Submitted to HMRC gateway (${messageClass}) — status: ${status.row.hmrc_status}.`)
     } catch (err) {
       state.submitError = (err as Error).message || 'Could not reach the HMRC gateway.'
       state.hmrcReceipt = { target: 'hmrc', status: 'rejected', timestamp: new Date().toISOString(), message: state.submitError }
@@ -311,23 +359,40 @@ export function useFilingWizard() {
 
   async function prepareCompaniesHouse() {
     try {
-      const res = await $fetch<{ ok: boolean; channel: string; message: string }>('/api/companies-house/prepare-accounts', {
+      const res = await $fetch<{ id: string; message: string }>('/api/companies-house/prepare-accounts', {
         method: 'POST',
-        body: { accountsIxbrl: accountsIxbrl.value, companyNumber: f.companyNumber }
+        body: {
+          id: state.submissionId || undefined,
+          accountsIxbrl: accountsIxbrl.value,
+          companyName: f.companyName,
+          periodEnd: f.periodEnd
+        }
       })
-      state.chReceipt = {
-        target: 'companiesHouse',
-        status: 'created',
-        timestamp: new Date().toISOString(),
-        message: res.message
-      }
+      state.submissionId = res.id
+      state.chReceipt = { target: 'companiesHouse', status: 'created', timestamp: new Date().toISOString(), message: res.message }
       logEvent('submission', 'Accounts iXBRL prepared for Companies House filing (no third-party accounts API is available yet).')
     } catch (err) {
-      state.chReceipt = {
-        target: 'companiesHouse', status: 'rejected', timestamp: new Date().toISOString(),
-        message: (err as Error).message
-      }
+      state.chReceipt = { target: 'companiesHouse', status: 'rejected', timestamp: new Date().toISOString(), message: (err as Error).message }
     }
+  }
+
+  /** Called on the receipt page mount/reload — just reads back whatever
+   *  status is already on record, no gateway calls. */
+  async function refreshSubmissionStatus(id: string) {
+    const res = await $fetch<{ row: SubmissionRowDto }>(`/api/submissions/${id}`)
+    applySubmissionRow(res.row)
+  }
+
+  /** Actively polls HMRC for a still-processing submission — needs the
+   *  Government Gateway credentials again (GovTalk polls are
+   *  authenticated the same way as the original submission). */
+  async function pollHmrcStatus() {
+    if (!state.submissionId) return
+    const res = await $fetch<{ row: SubmissionRowDto }>('/api/hmrc/poll-ct600', {
+      method: 'POST',
+      body: { id: state.submissionId, gatewayUserId: f.gwUser, gatewayPassword: f.gwPass }
+    })
+    applySubmissionRow(res.row)
   }
 
   // --- Guided balance-sheet entry ---
@@ -378,6 +443,7 @@ export function useFilingWizard() {
     approveFiling, checkApprovalStale,
     accountsIxbrl, taxComputationIxbrl,
     submitToHmrc, prepareCompaniesHouse,
+    refreshSubmissionStatus, pollHmrcStatus,
     createAmendmentFromReceipt
   }
 }

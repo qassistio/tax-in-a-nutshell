@@ -21,7 +21,14 @@ function onDrop(e: DragEvent) {
 <template>
   <div class="dialog-backdrop" @click.self="wizard.importClose()">
     <div class="dialog" role="dialog" aria-modal="true" aria-label="Import trial balance">
-      <div class="dialog-title">Import trial balance</div>
+      <div class="dialog-title" style="display:flex; align-items:center; justify-content:space-between;">
+        <span style="display:flex; align-items:center; gap: var(--space-2);">
+          <AppIcon name="document" :size="18" />Import trial balance
+        </span>
+        <button type="button" class="btn btn-ghost" aria-label="Close" @click="wizard.importClose()">
+          <AppIcon name="close" :size="16" />
+        </button>
+      </div>
 
       <template v-if="state.importStage === 'drop'">
         <p class="dialog-body">
@@ -35,9 +42,10 @@ function onDrop(e: DragEvent) {
           @dragleave.prevent="dragOver = false"
           @drop.prevent="onDrop"
         >
+          <AppIcon name="upload" :size="28" />
           <p class="card-body">Drag a CSV file here, or</p>
           <label class="btn btn-secondary" style="cursor:pointer;">
-            Choose file
+            <AppIcon name="upload" :size="14" />Choose file
             <input type="file" accept=".csv,text/csv" style="display:none" @change="onFileInput">
           </label>
         </div>
@@ -59,8 +67,8 @@ function onDrop(e: DragEvent) {
                 <td>{{ row.name }}</td>
                 <td class="num">£{{ Math.abs(row.amount).toLocaleString('en-GB') }}</td>
                 <td>
-                  <span v-if="row.mapsTo" class="tag tag-accent">{{ row.mapsTo }}</span>
-                  <span v-else class="tag tag-accent-2">Unmatched</span>
+                  <span v-if="row.mapsTo" class="tag tag-accent"><AppIcon name="check" :size="12" weight="fill" />{{ row.mapsTo }}</span>
+                  <span v-else class="tag tag-accent-2"><AppIcon name="warn" :size="12" weight="fill" />Unmatched</span>
                 </td>
               </tr>
             </tbody>
@@ -69,12 +77,14 @@ function onDrop(e: DragEvent) {
       </template>
 
       <div class="dialog-actions">
-        <button type="button" class="btn btn-secondary" @click="wizard.importClose()">Cancel</button>
+        <button type="button" class="btn btn-secondary" @click="wizard.importClose()">
+          <AppIcon name="close" :size="14" />Cancel
+        </button>
         <button
           v-if="state.importStage === 'map'" type="button" class="btn btn-primary"
           @click="wizard.importApply()"
         >
-          Apply to balance sheet
+          <AppIcon name="check" :size="14" />Apply to balance sheet
         </button>
       </div>
     </div>

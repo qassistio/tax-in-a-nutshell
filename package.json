@@ -7,7 +7,8 @@
     "dev": "nuxt dev",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
-    "postinstall": "nuxt prepare"
+    "postinstall": "nuxt prepare",
+    "test": "vitest run"
   },
   "dependencies": {
     "@phosphor-icons/vue": "^2.2.1",
@@ -16,7 +17,9 @@
     "vue-router": "^5.3.1"
   },
   "devDependencies": {
+    "@types/node": "^26.6.2",
     "typescript": "^5.9.3",
+    "vitest": "^5.0.1",
     "vue-tsc": "^3.3.11"
   }
 }

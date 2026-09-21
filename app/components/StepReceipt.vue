@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import type { useFilingWizard } from '../composables/useFilingWizard'
 import { SUBMISSION_STATUS_LABELS } from '../domain/filing/submissionStatus'
 
@@ -22,6 +22,17 @@ function downloadAccountsIxbrl() {
 function downloadTaxComputationIxbrl() {
   download(`${f.companyName || 'company'}-tax-computation.html`, taxComputationIxbrl.value)
 }
+const polling = ref(false)
+const pollNeedsCredentials = computed(() => !f.gwUser || !f.gwPass)
+async function checkForUpdates() {
+  polling.value = true
+  try {
+    await props.wizard.pollHmrcStatus()
+  } finally {
+    polling.value = false
+  }
+}
+
 function downloadReceipt() {
   download(`${f.companyName || 'filing'}-receipt.json`, JSON.stringify({
     company: { name: f.companyName, number: f.companyNumber, utr: f.utr },
@@ -67,12 +78,42 @@ async function onReceiptFilePicked(event: Event) {
   </div>
 
   <h4 style="margin-top: var(--space-6);">HMRC</h4>
-  <p v-if="state.hmrcReceipt">
-    <span class="tag" :class="state.hmrcReceipt.status === 'rejected' ? 'tag-accent-2' : 'tag-accent'">
-      {{ SUBMISSION_STATUS_LABELS[state.hmrcReceipt.status] }}
-    </span>
-    {{ state.hmrcReceipt.message }}
-  </p>
+  <template v-if="state.hmrcReceipt">
+    <p>
+      <span class="tag" :class="state.hmrcReceipt.status === 'rejected' ? 'tag-accent-2' : 'tag-accent'">
+        {{ SUBMISSION_STATUS_LABELS[state.hmrcReceipt.status] }}
+      </span>
+      {{ state.hmrcReceipt.message }}
+    </p>
+
+    <div v-for="e in state.rejectionDetails" :key="e.rawText" class="card elev-sm" style="margin-top: var(--space-2);">
+      <div class="card-kicker">{{ e.code ? `HMRC error ${e.code}` : 'HMRC error' }}</div>
+      <div class="card-title">{{ e.headline }}</div>
+      <p class="card-body">{{ e.detail }}</p>
+    </div>
+
+    <template v-if="state.hmrcReceipt.status === 'submitted'">
+      <p class="text-muted" style="font-size: 13px;">
+        HMRC has acknowledged this submission but hasn't given a final accept/reject yet. Reloading this page (it's
+        bookmarkable) re-checks the status that's on record; use the button below to actively ask HMRC for an
+        update, which needs your Government Gateway details again since they're not kept after this browser tab
+        closes or the page reloads.
+      </p>
+      <div v-if="pollNeedsCredentials" class="field-grid">
+        <div class="field">
+          <label for="pollUser">Government Gateway user ID</label>
+          <input id="pollUser" v-model="f.gwUser" class="input" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="pollPass">Government Gateway password</label>
+          <input id="pollPass" v-model="f.gwPass" type="password" class="input" autocomplete="off">
+        </div>
+      </div>
+      <button type="button" class="btn btn-secondary" :disabled="polling || pollNeedsCredentials" @click="checkForUpdates">
+        <AppIcon v-if="polling" name="spinner" :size="14" />{{ polling ? 'Checking…' : 'Check for updates' }}
+      </button>
+    </template>
+  </template>
   <p v-else class="text-muted">No Company Tax Return was included in this filing.</p>
 
   <h4>Companies House</h4>
@@ -93,8 +134,9 @@ async function onReceiptFilePicked(event: Event) {
   </div>
   <p class="text-muted" style="margin-top: var(--space-3); font-size: 13px;">
     The iXBRL documents are structural drafts — verify the tagged elements against the current FRS 105 and HMRC CT
-    taxonomies before relying on them. Keep the downloaded receipt: it's what you'll need to open an amendment later,
-    since nothing from this session is kept anywhere but this browser tab.
+    taxonomies before relying on them. Keep the downloaded receipt: it's what you'll need to open an amendment later
+    — only the gateway status against submission {{ state.submissionId || '—' }} is kept server-side, never your
+    figures.
   </p>
 
   <h4 style="margin-top: var(--space-6);">Amendments</h4>

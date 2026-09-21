@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Component } from 'vue'
+import { onMounted, watch, type Component } from 'vue'
 import { useFilingWizard } from './composables/useFilingWizard'
 import type { StepId } from './composables/useFilingWizard'
 import StepStart from './components/StepStart.vue'
@@ -32,6 +32,25 @@ const stepComponents: Record<StepId, Component> = {
   declaration: StepDeclaration,
   receipt: StepReceipt
 }
+
+// Reloading the page (or opening a link someone was sent) restores the
+// submission status screen from the GUID in the URL — see
+// server/utils/db.ts for what's actually stored against that id (status
+// metadata only, never the accounting figures).
+onMounted(async () => {
+  const id = new URLSearchParams(window.location.search).get('submission')
+  if (id) {
+    await wizard.refreshSubmissionStatus(id)
+    wizard.go('receipt')
+  }
+})
+
+watch(() => state.submissionId, (id) => {
+  if (!id) return
+  const url = new URL(window.location.href)
+  url.searchParams.set('submission', id)
+  window.history.replaceState({}, '', url)
+})
 </script>
 
 <template>
@@ -77,7 +96,7 @@ const stepComponents: Record<StepId, Component> = {
   <footer class="site-footer">
     <span>TaxInANutshell — a QAssist product</span>
     <span>HMRC-recognised for CT600 and FRS 105 accounts</span>
-    <span class="site-footer-right">No cookies. No analytics. No server-side storage.</span>
+    <span class="site-footer-right">No cookies. No analytics. Only a submission status ID is stored server-side.</span>
   </footer>
 
   <ImportTrialBalanceDialog v-if="state.importOpen" :wizard="wizard" />
