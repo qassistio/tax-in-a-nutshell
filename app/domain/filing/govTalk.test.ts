@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildGovTalkEnvelope, buildGovTalkPollEnvelope, computeIRmark, parseGovTalkResponse } from './govTalk'
+import { buildGovTalkEnvelope, buildGovTalkPollEnvelope, buildIrMarkHashingBody, parseGovTalkResponse } from './govTalk'
 
 const credentials = { gatewayUserId: 'user1', gatewayPassword: 'pass1', vendorId: 'vendor1' }
 
@@ -36,29 +36,31 @@ describe('buildGovTalkPollEnvelope', () => {
   })
 })
 
-describe('computeIRmark', () => {
-  it('is deterministic for the same body', async () => {
-    const a = await computeIRmark('<Body><A>1</A></Body>')
-    const b = await computeIRmark('<Body><A>1</A></Body>')
-    expect(a).toBe(b)
+describe('buildIrMarkHashingBody', () => {
+  // The actual canonicalisation + SHA-1/base64 digest happens server-side
+  // (server/api/hmrc/compute-irmark.post.ts, using a real C14N library) —
+  // this only checks the XML fragment shape that gets sent there, since
+  // that's the part requirements.md §37/§38 keeps in the Vue/Node-free
+  // domain layer.
+  const input = { companyUtr: '1234567890', companyName: 'Acme & Co', periodEnd: '2024-12-31', bodyXml: '<CompanyTaxReturn />' }
+
+  it('wraps the real Body content with an explicit envelope namespace and an empty IRmark', () => {
+    const xml = buildIrMarkHashingBody(input)
+    expect(xml).toContain('<Body xmlns="http://www.govtalk.gov.uk/CM/envelope">')
+    expect(xml).toContain('<IRmark Type="generic"></IRmark>')
+    expect(xml).toContain('<Key Type="UTR">1234567890</Key>')
+    expect(xml).toContain('<CompanyTaxReturn />')
+    expect(xml).toContain('Acme &amp; Co')
   })
 
-  it('is insensitive to insignificant whitespace between elements', async () => {
-    const a = await computeIRmark('<Body><A>1</A></Body>')
-    const b = await computeIRmark('<Body>\n  <A>1</A>\n</Body>')
-    expect(a).toBe(b)
-  })
-
-  it('is insensitive to attribute order', async () => {
-    const a = await computeIRmark('<A x="1" y="2" />')
-    const b = await computeIRmark('<A y="2" x="1" />')
-    expect(a).toBe(b)
-  })
-
-  it('changes when the content changes', async () => {
-    const a = await computeIRmark('<Body><A>1</A></Body>')
-    const b = await computeIRmark('<Body><A>2</A></Body>')
-    expect(a).not.toBe(b)
+  it('matches the IRenvelope content buildGovTalkEnvelope embeds, aside from the empty IRmark', () => {
+    const hashingBody = buildIrMarkHashingBody(input)
+    const envelope = buildGovTalkEnvelope({
+      messageClass: 'HMRC-CT-CT600-TIL', credentials, irMark: 'REALMARK==', ...input
+    })
+    expect(hashingBody).toContain('<PeriodEnd>2024-12-31</PeriodEnd>')
+    expect(envelope).toContain('<PeriodEnd>2024-12-31</PeriodEnd>')
+    expect(envelope).toContain('<IRmark Type="generic">REALMARK==</IRmark>')
   })
 })
 

@@ -3,10 +3,14 @@
 // standard add-backs/deductions, taxable total profits, and the
 // Corporation Tax charge, tagged against HMRC's CT taxonomy.
 //
-// Same caveat as accountsIxbrl.ts: element names are a best-effort
-// structural draft, not verified against HMRC's current taxonomy pack.
+// Same caveat as accountsIxbrl.ts: element names below were checked
+// against a real downloaded copy of HMRC's CT computational 2024-01-01
+// taxonomy (fetched directly from www.hmrc.gov.uk/schemas/ct/comp/ — see
+// the note in taxonomy.ts) rather than guessed. That was still a one-off
+// manual check, not an automated or independently reviewed one —
 // requirements.md §19 explicitly warns against guessing filing tags for
-// production use — review before any real submission.
+// production use, so review against the real taxonomy before any real
+// submission regardless.
 
 import { ctTaxonomyFor } from './taxonomy'
 import type { CompanyDetails, AccountingPeriod, TaxAdjustments } from '../types'
@@ -76,18 +80,19 @@ export function generateTaxComputationIxbrl(input: TaxComputationIxbrlInput): st
   <p>UTR ${esc(company.utr)} — period ${esc(period.periodStart)} to ${esc(period.periodEnd)}.</p>
 
   <table>
-    <tr><td>Profit per accounts before tax</td><td>${fact('ProfitLossOnOrdinaryActivitiesBeforeTax', p, cDuration, uGBP, profitBeforeTax, 'f-pbt')}</td></tr>
-    <tr><td>Add: depreciation</td><td>${fact('DepreciationAddedBack', p, cDuration, uGBP, adjustments.addDepreciation, 'f-adddepn')}</td></tr>
-    <tr><td>Add: client entertaining</td><td>${fact('EntertainmentAddedBack', p, cDuration, uGBP, adjustments.addEntertaining, 'f-addent')}</td></tr>
-    <tr><td>Less: capital allowances</td><td>${fact('CapitalAllowances', p, cDuration, uGBP, adjustments.capAllowances, 'f-capall')}</td></tr>
-    <tr><td>Trading profit</td><td>${fact('TradingProfitLoss', p, cDuration, uGBP, tradingProfit, 'f-tradeprofit')}</td></tr>
-    <tr><td>Taxable total profits</td><td>${fact('TaxableTotalProfits', p, cDuration, uGBP, result.taxableTotalProfits, 'f-ttp')}</td></tr>
-    <tr><td>Corporation Tax chargeable (${esc(result.rates.version)})</td><td>${fact('TaxChargeableTotalProfits', p, cDuration, uGBP, result.corporationTax, 'f-cttax')}</td></tr>
+    <tr><td>Profit per accounts before tax</td><td>${fact('ProfitLossPerAccounts', p, cDuration, uGBP, profitBeforeTax, 'f-pbt')}</td></tr>
+    <tr><td>Add: depreciation</td><td>${fact('AdjustmentsDepreciation', p, cDuration, uGBP, adjustments.addDepreciation, 'f-adddepn')}</td></tr>
+    <tr><td>Add: client entertaining</td><td>${fact('AdjustmentsEntertaining', p, cDuration, uGBP, adjustments.addEntertaining, 'f-addent')}</td></tr>
+    <tr><td>Less: capital allowances</td><td>${fact('TotalCapitalAllowances', p, cDuration, uGBP, adjustments.capAllowances, 'f-capall')}</td></tr>
+    <tr><td>Trading profit</td><td>${fact('NetTradingProfits', p, cDuration, uGBP, tradingProfit, 'f-tradeprofit')}</td></tr>
+    <tr><td>Taxable total profits</td><td>${fact('TotalProfitsChargeableToCorporationTax', p, cDuration, uGBP, result.taxableTotalProfits, 'f-ttp')}</td></tr>
+    <tr><td>Corporation Tax chargeable (${esc(result.rates.version)})</td><td>${fact('CorporationTaxChargeable', p, cDuration, uGBP, result.corporationTax, 'f-cttax')}</td></tr>
   </table>
   <p>${esc(result.rateNote)}</p>
 
-  <p><em>Draft structural document — element names have not been verified against the
-  current ${esc(taxonomy.version)} taxonomy pack. Review before filing.</em></p>
+  <p><em>Draft structural document — element names were checked against a downloaded copy of the
+  ${esc(taxonomy.version)} taxonomy pack, but that check was a one-off manual exercise, not an
+  independently reviewed one. Review before filing.</em></p>
 </body>
 </html>
 `

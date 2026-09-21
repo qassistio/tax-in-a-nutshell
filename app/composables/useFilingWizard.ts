@@ -7,7 +7,7 @@ import { findProblems, findMissingAmountFields, MICRO_ENTITY_TURNOVER_LIMIT } fr
 import { createAuditEntry, buildTaxableProfitTrail, type AuditEntry, type AuditCategory } from '../domain/audit/auditTrail'
 import { hashArtefacts, createApprovalRecord, isApprovalStale, type ApprovalRecord } from '../domain/filing/approval'
 import type { GatewayReceipt } from '../domain/filing/submissionStatus'
-import { computeIRmark, buildGovTalkEnvelope, parseGovTalkResponse, type CtMessageClass } from '../domain/filing/govTalk'
+import { buildIrMarkHashingBody, buildGovTalkEnvelope, parseGovTalkResponse, type CtMessageClass } from '../domain/filing/govTalk'
 import { generateAccountsIxbrl } from '../domain/ixbrl/accountsIxbrl'
 import { generateTaxComputationIxbrl } from '../domain/ixbrl/taxComputationIxbrl'
 import { diffFields, createAmendment, type Amendment } from '../domain/filing/amendments'
@@ -331,7 +331,17 @@ export function useFilingWizard() {
     try {
       const messageClass: CtMessageClass = state.testInLive ? 'HMRC-CT-CT600-TIL' : 'HMRC-CT-CT600'
       const bodyXml = `<CompanyTaxReturn><TaxComputation><![CDATA[${taxComputationIxbrl.value}]]></TaxComputation></CompanyTaxReturn>`
-      const irMark = await computeIRmark(bodyXml)
+      // IRmark is computed over the real <Body> content (empty IRmark, see
+      // buildIrMarkHashingBody) using real W3C Exclusive C14N — done
+      // server-side, not here, because that needs a real XML DOM/C14N
+      // library (see server/api/hmrc/compute-irmark.post.ts).
+      const hashingBody = buildIrMarkHashingBody({
+        companyUtr: f.utr, companyName: f.companyName, periodEnd: f.periodEnd, bodyXml
+      })
+      const { irMark } = await $fetch<{ irMark: string }>('/api/hmrc/compute-irmark', {
+        method: 'POST',
+        body: { bodyXml: hashingBody }
+      })
       const envelopeXml = buildGovTalkEnvelope({
         messageClass,
         credentials: { gatewayUserId: f.gwUser, gatewayPassword: f.gwPass, vendorId: state.vendorId },

@@ -39,41 +39,42 @@ function esc(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-/** A best-effort approximation of exclusive XML canonicalisation
- *  (strips the declaration and comments, collapses insignificant
- *  whitespace between elements, sorts each element's attributes
- *  alphabetically). This is NOT a conformant W3C C14N implementation —
- *  real C14N also normalises namespace declarations, character/entity
- *  references and attribute value whitespace more strictly than this
- *  does. Treat IRmark values produced from this as unverified until
- *  checked against HMRC's published algorithm and a real C14N library. */
-function approximateCanonicalize(xml: string): string {
-  let s = xml.replace(/<\?xml[^>]*\?>/, '').replace(/<!--[\s\S]*?-->/g, '')
-  s = s.replace(/>\s+</g, '><').trim()
-  s = s.replace(/<([\w:-]+)((?:\s+[\w:-]+="[^"]*")*)\s*(\/?)>/g, (_match, name, attrs, selfClose) => {
-    const pairs = [...(attrs as string).matchAll(/([\w:-]+)="([^"]*)"/g)].map(m => [m[1]!, m[2]!] as [string, string])
-    pairs.sort((a, b) => a[0].localeCompare(b[0]))
-    const attrStr = pairs.map(([k, v]) => ` ${k}="${v}"`).join('')
-    return `<${name}${attrStr}${selfClose}>`
-  })
-  return s
+/** The `<IRenvelope>` element and everything inside it — shared between
+ *  the real envelope (built with the real IRmark) and the hashing body
+ *  below (built with an empty IRmark, per HMRC's published algorithm:
+ *  the mark is computed with the `<IRmark>` element present but empty,
+ *  never over itself). Kept as one function so the two can't drift. */
+function buildIrEnvelopeInner(input: Pick<GovTalkEnvelopeInput, 'companyUtr' | 'companyName' | 'periodEnd' | 'bodyXml'> & { irMark: string }): string {
+  return `<IRenvelope xmlns="http://www.govtalk.gov.uk/taxation/CT/5">
+      <IRheader>
+        <Keys><Key Type="UTR">${esc(input.companyUtr)}</Key></Keys>
+        <PeriodEnd>${esc(input.periodEnd)}</PeriodEnd>
+        <Principal><Contact><Name><Company>${esc(input.companyName)}</Company></Name></Contact></Principal>
+        <IRmark Type="generic">${esc(input.irMark)}</IRmark>
+        <Sender>Company</Sender>
+      </IRheader>
+      ${input.bodyXml}
+    </IRenvelope>`
 }
 
-/** Best-effort implementation of HMRC's published IRmark algorithm:
- *  canonicalise the submission body, SHA-1 digest it, base64-encode the
- *  result. Runs client-side via Web Crypto — the body must NOT yet
- *  contain the IRmark element itself (it's computed over everything the
- *  IRmark then gets inserted next to). */
-export async function computeIRmark(bodyXml: string): Promise<string> {
-  const canonical = approximateCanonicalize(bodyXml)
-  const bytes = new TextEncoder().encode(canonical)
-  const digest = await crypto.subtle.digest('SHA-1', bytes)
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+/** Builds the exact `<Body>` fragment HMRC's IRmark algorithm is computed
+ *  over: the real `<Body>` content, IRmark left empty, with the enclosing
+ *  `GovTalkMessage` envelope's namespace declaration copied onto `<Body>`
+ *  explicitly (it's only implicit-by-inheritance in the full envelope,
+ *  but this fragment is hashed standalone, so the declaration has to be
+ *  physically present for canonicalisation to see it — HMRC's spec calls
+ *  this out explicitly). Actual canonicalisation + digest happens
+ *  server-side (see server/api/hmrc/compute-irmark.post.ts) using a real
+ *  W3C Exclusive C14N implementation — this file stays Vue/Node-free. */
+export function buildIrMarkHashingBody(input: Pick<GovTalkEnvelopeInput, 'companyUtr' | 'companyName' | 'periodEnd' | 'bodyXml'>): string {
+  return `<Body xmlns="http://www.govtalk.gov.uk/CM/envelope">${buildIrEnvelopeInner({ ...input, irMark: '' })}</Body>`
 }
 
 /** Builds the GovTalk envelope wrapping a CT600 IRenvelope body. The
  *  caller supplies `bodyXml` (the IRenvelope-specific tax return content,
- *  including tagged iXBRL attachments) and a pre-computed IRmark. */
+ *  including tagged iXBRL attachments) and a pre-computed IRmark — get
+ *  the IRmark by hashing `buildIrMarkHashingBody(input)` first (see
+ *  server/api/hmrc/compute-irmark.post.ts). */
 export function buildGovTalkEnvelope(input: GovTalkEnvelopeInput): string {
   const timestamp = new Date().toISOString()
   const correlationId = input.correlationId ?? ''
@@ -113,16 +114,7 @@ export function buildGovTalkEnvelope(input: GovTalkEnvelopeInput): string {
     </ChannelRouting>
   </GovTalkDetails>
   <Body>
-    <IRenvelope xmlns="http://www.govtalk.gov.uk/taxation/CT/5">
-      <IRheader>
-        <Keys><Key Type="UTR">${esc(input.companyUtr)}</Key></Keys>
-        <PeriodEnd>${esc(input.periodEnd)}</PeriodEnd>
-        <Principal><Contact><Name><Company>${esc(input.companyName)}</Company></Name></Contact></Principal>
-        <IRmark Type="generic">${esc(input.irMark)}</IRmark>
-        <Sender>Company</Sender>
-      </IRheader>
-      ${input.bodyXml}
-    </IRenvelope>
+    ${buildIrEnvelopeInner(input)}
   </Body>
 </GovTalkMessage>
 <!-- generated ${esc(timestamp)}; structural draft — verify against HMRC's published GovTalk/CT schema before live use -->

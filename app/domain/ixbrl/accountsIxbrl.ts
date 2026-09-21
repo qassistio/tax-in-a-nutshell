@@ -4,11 +4,13 @@
 // GBP unit, and ix:nonFraction facts tagged against the FRS 105 taxonomy.
 //
 // CAVEAT (requirements.md §19: "AI should not dynamically guess filing
-// tags during production filing"): the element names below are the
-// author's best-effort reading of the published FRS 105 taxonomy and are
-// NOT verified against HMRC/FRC's current taxonomy pack. Treat this as a
-// structural draft to review against the real taxonomy before any real
-// submission — never file it unchecked.
+// tags during production filing"): the element names below were checked
+// against a real downloaded copy of the FRC 2026 Taxonomy Suite (see the
+// note in taxonomy.ts for how and when) rather than guessed — but that
+// check was a one-off manual exercise, not an automated or independently
+// reviewed one. Treat this as a materially better structural draft than
+// before, not a substitute for review against the real taxonomy pack
+// before any real submission.
 
 import { accountsTaxonomyFor } from './taxonomy'
 import type { CompanyDetails, AccountingPeriod, BalanceSheetFigures, ProfitAndLossFigures } from '../types'
@@ -36,9 +38,12 @@ export function generateAccountsIxbrl(input: AccountsIxbrlInput): string {
   const p = taxonomy.prefix
 
   const cInstant = 'ctx-bs'
+  const cInstantCredWithin = 'ctx-bs-cred-within'
+  const cInstantCredAfter = 'ctx-bs-cred-after'
   const cDuration = 'ctx-pl'
   const cEntity = esc(company.companyNumber || 'unknown')
   const uGBP = 'u-gbp'
+  const { axis, withinOneYear, afterOneYear } = taxonomy.maturityDimension
 
   const fixedAndCurrent = balance.fixedAssets + balance.currentAssets + balance.prepayments
   const netCurrentLiabilities = balance.creditorsWithin
@@ -50,6 +55,7 @@ export function generateAccountsIxbrl(input: AccountsIxbrlInput): string {
       xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
       xmlns:ixt="http://www.xbrl.org/inlineXBRL/transformation/2015-02-26"
       xmlns:xbrli="http://www.xbrl.org/2003/instance"
+      xmlns:xbrldi="http://xbrl.org/2006/xbrldi"
       xmlns:${p}="${taxonomy.namespace}"
       xmlns:iso4217="http://www.xbrl.org/2003/iso4217"
       xml:lang="en">
@@ -65,6 +71,29 @@ export function generateAccountsIxbrl(input: AccountsIxbrlInput): string {
           <xbrli:identifier scheme="http://www.companieshouse.gov.uk/">${cEntity}</xbrli:identifier>
         </xbrli:entity>
         <xbrli:period><xbrli:instant>${esc(period.periodEnd)}</xbrli:instant></xbrli:period>
+      </xbrli:context>
+      <!-- Creditors is a single tagged concept in the FRC taxonomy, split
+           by the "within one year" / "after more than one year" contexts
+           below via the maturity dimension rather than by two differently
+           named concepts — see the comment on AccountsTaxonomy in
+           taxonomy.ts. -->
+      <xbrli:context id="${cInstantCredWithin}">
+        <xbrli:entity>
+          <xbrli:identifier scheme="http://www.companieshouse.gov.uk/">${cEntity}</xbrli:identifier>
+        </xbrli:entity>
+        <xbrli:period><xbrli:instant>${esc(period.periodEnd)}</xbrli:instant></xbrli:period>
+        <xbrli:scenario>
+          <xbrldi:explicitMember dimension="${p}:${axis}">${p}:${withinOneYear}</xbrldi:explicitMember>
+        </xbrli:scenario>
+      </xbrli:context>
+      <xbrli:context id="${cInstantCredAfter}">
+        <xbrli:entity>
+          <xbrli:identifier scheme="http://www.companieshouse.gov.uk/">${cEntity}</xbrli:identifier>
+        </xbrli:entity>
+        <xbrli:period><xbrli:instant>${esc(period.periodEnd)}</xbrli:instant></xbrli:period>
+        <xbrli:scenario>
+          <xbrldi:explicitMember dimension="${p}:${axis}">${p}:${afterOneYear}</xbrldi:explicitMember>
+        </xbrli:scenario>
       </xbrli:context>
       <xbrli:context id="${cDuration}">
         <xbrli:entity>
@@ -93,12 +122,12 @@ export function generateAccountsIxbrl(input: AccountsIxbrlInput): string {
     <tr><td>Fixed assets</td><td>${fact('FixedAssets', p, cInstant, uGBP, balance.fixedAssets, 'f-fixed')}</td></tr>
     <tr><td>Current assets</td><td>${fact('CurrentAssets', p, cInstant, uGBP, balance.currentAssets, 'f-current')}</td></tr>
     <tr><td>Prepayments and accrued income</td><td>${fact('PrepaymentsAccruedIncome', p, cInstant, uGBP, balance.prepayments, 'f-prepay')}</td></tr>
-    <tr><td>Creditors: amounts falling due within one year</td><td>${fact('CreditorsDueWithinOneYear', p, cInstant, uGBP, balance.creditorsWithin, 'f-credwithin')}</td></tr>
-    <tr><td>Creditors: amounts falling due after one year</td><td>${fact('CreditorsDueAfterOneYear', p, cInstant, uGBP, balance.creditorsAfter, 'f-credafter')}</td></tr>
-    <tr><td>Provisions for liabilities</td><td>${fact('ProvisionsForLiabilities', p, cInstant, uGBP, balance.provisions, 'f-provisions')}</td></tr>
+    <tr><td>Creditors: amounts falling due within one year</td><td>${fact('Creditors', p, cInstantCredWithin, uGBP, balance.creditorsWithin, 'f-credwithin')}</td></tr>
+    <tr><td>Creditors: amounts falling due after one year</td><td>${fact('Creditors', p, cInstantCredAfter, uGBP, balance.creditorsAfter, 'f-credafter')}</td></tr>
+    <tr><td>Provisions for liabilities</td><td>${fact('ProvisionsForLiabilitiesBalanceSheetSubtotal', p, cInstant, uGBP, balance.provisions, 'f-provisions')}</td></tr>
     <tr><td>Net assets</td><td>${fact('NetAssetsLiabilities', p, cInstant, uGBP, netAssets, 'f-netassets')}</td></tr>
     <tr><td>Called up share capital</td><td>${fact('ShareCapital', p, cInstant, uGBP, balance.shareCapital, 'f-sharecap')}</td></tr>
-    <tr><td>Profit and loss account</td><td>${fact('ProfitLossAccountReserve', p, cInstant, uGBP, balance.retained, 'f-retained')}</td></tr>
+    <tr><td>Profit and loss account</td><td>${fact('RetainedEarningsAccumulatedLosses', p, cInstant, uGBP, balance.retained, 'f-retained')}</td></tr>
   </table>
 
   <h2>Profit and loss account for the period ended ${esc(period.periodEnd)}</h2>
@@ -107,13 +136,14 @@ export function generateAccountsIxbrl(input: AccountsIxbrlInput): string {
     <tr><td>Other income</td><td>${fact('OtherOperatingIncomeFormat2', p, cDuration, uGBP, pnl.otherIncome, 'f-otherincome')}</td></tr>
     <tr><td>Cost of raw materials and consumables</td><td>${fact('RawMaterialsConsumables', p, cDuration, uGBP, pnl.rawMaterials, 'f-rawmat')}</td></tr>
     <tr><td>Staff costs</td><td>${fact('StaffCostsEmployeeBenefitsExpense', p, cDuration, uGBP, pnl.staffCosts, 'f-staff')}</td></tr>
-    <tr><td>Depreciation and other amounts written off assets</td><td>${fact('DepreciationOtherAmountsWrittenOffTangibleIntangibleFixedAssets', p, cDuration, uGBP, pnl.depreciation, 'f-depn')}</td></tr>
+    <tr><td>Depreciation and other amounts written off assets</td><td>${fact('DepreciationAmortisationImpairmentExpense', p, cDuration, uGBP, pnl.depreciation, 'f-depn')}</td></tr>
     <tr><td>Other charges</td><td>${fact('OtherOperatingExpensesFormat2', p, cDuration, uGBP, pnl.otherCharges, 'f-othercharges')}</td></tr>
     <tr><td>Profit or loss before tax</td><td>${fact('ProfitLossOnOrdinaryActivitiesBeforeTax', p, cDuration, uGBP, profitBeforeTax, 'f-pbt')}</td></tr>
   </table>
 
-  <p><em>Draft structural document — element names have not been verified against the
-  current ${esc(taxonomy.version)} taxonomy pack. Review before filing.</em></p>
+  <p><em>Draft structural document — element names were checked against a downloaded copy of the
+  ${esc(taxonomy.version)} taxonomy pack, but that check was a one-off manual exercise, not an
+  independently reviewed one. Review before filing.</em></p>
 </body>
 </html>
 `
