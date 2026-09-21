@@ -15,6 +15,7 @@ import type { GatewayReceipt } from '../domain/filing/submissionStatus'
 import { buildIrMarkHashingBody, parseGovTalkResponse } from '../domain/filing/govTalk'
 import { generateAccountsIxbrl } from '../domain/ixbrl/accountsIxbrl'
 import { generateTaxComputationIxbrl } from '../domain/ixbrl/taxComputationIxbrl'
+import { buildCt600Xml } from '../domain/filing/ct600'
 import { diffFields, createAmendment, type Amendment } from '../domain/filing/amendments'
 import { translateGovTalkErrors, type TranslatedError } from '../domain/filing/rejectionMessages'
 
@@ -507,6 +508,23 @@ export function useFilingWizard() {
     directorLoanBalance: parsePounds(f.directorLoanBalance)
   }))
 
+  // requirements.md §16/§20 — the actual CT600 return, distinct from (but
+  // attaching) the iXBRL accounts and tax computation above.
+  const ct600Xml = computed(() => buildCt600Xml({
+    company: company.value, period: period.value,
+    turnover: pnl.value.turnover,
+    tradingProfit: tradingResultAfterCapitalAllowances.value,
+    lossesRelieved: lossRelief.value.reliefUsed,
+    result: corporationTax.value,
+    directorLoan: directorLoanAssessment.value,
+    directorLoanBalance: parsePounds(f.directorLoanBalance),
+    accountsIxbrl: accountsIxbrl.value,
+    taxComputationIxbrl: taxComputationIxbrl.value,
+    declarantName: f.declName || f.approver,
+    declarantStatus: f.declRole || 'Director',
+    returnType: state.amendments.length > 0 ? 'amended' : 'new'
+  }))
+
   /** Maps the SQLite status row onto the two GatewayReceipt values the UI
    *  reads, and re-derives plain-English rejection messages (§30). */
   function applySubmissionRow(row: SubmissionRowDto) {
@@ -548,7 +566,7 @@ export function useFilingWizard() {
     state.submitting = true
     state.submitError = ''
     try {
-      const bodyXml = `<CompanyTaxReturn><TaxComputation><![CDATA[${taxComputationIxbrl.value}]]></TaxComputation></CompanyTaxReturn>`
+      const bodyXml = ct600Xml.value
       // IRmark needs real W3C Exclusive C14N, computed server-side (see
       // compute-irmark.post.ts).
       const hashingBody = buildIrMarkHashingBody({
@@ -704,7 +722,7 @@ export function useFilingWizard() {
     formatPounds,
     logEvent, figureTrail,
     approveFiling, checkApprovalStale,
-    accountsIxbrl, taxComputationIxbrl,
+    accountsIxbrl, taxComputationIxbrl, ct600Xml,
     submitToHmrc, submitToCompaniesHouse,
     refreshSubmissionStatus, pollHmrcStatus, pollCompaniesHouseStatus,
     createAmendmentFromReceipt,
