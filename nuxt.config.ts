@@ -50,6 +50,18 @@ export default defineNuxtConfig({
     // server/api/companies-house/search.get.ts and company/[number].get.ts.
     companiesHouseApiKey: '',
 
+    // Where the one server-side table (see server/utils/db.ts) lives.
+    // Locally this is a plain SQLite file on disk. In production this app
+    // is hosted on Vercel, whose serverless functions have no persistent
+    // filesystem — a local file there would silently reset every cold
+    // start — so NUXT_TURSO_DATABASE_URL/_AUTH_TOKEN must be set to a
+    // remote libSQL (Turso) database instead; server/utils/db.ts refuses
+    // to fall back to a local file when running on Vercel. dbPath is
+    // unused whenever tursoDatabaseUrl is set.
+    dbPath: './.data/submissions.sqlite',
+    tursoDatabaseUrl: '',
+    tursoAuthToken: '',
+
     // Public — readable in the browser, unlike everything above.
     public: {
       siteUrl: SITE_URL

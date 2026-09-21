@@ -1,5 +1,8 @@
 // Drizzle schema for the ONE table this app persists server-side — see
-// the module comment in db.ts for what it does and doesn't hold.
+// the module comment in server/utils/db.ts for what it does and doesn't
+// hold. Lives under server/db/ (schema + migrations together) rather than
+// server/utils/ so drizzle-kit's config (drizzle.config.ts) has a single
+// directory to point at.
 //
 // Field names are kept snake_case (matching the DB column names exactly)
 // rather than the more idiomatic Drizzle camelCase, because the resulting
@@ -34,8 +37,8 @@ export const submissions = sqliteTable('submissions', {
 
 /** Companies House's <TransactionID> must strictly increase across the
  *  presenter's whole XML Gateway history (see nextChTransactionId in
- *  db.ts) — this single-row-per-name table is where that running value
- *  lives. */
+ *  server/utils/db.ts) — this single-row-per-name table is where that
+ *  running value lives. */
 export const counters = sqliteTable('counters', {
   name: text('name').primaryKey(),
   value: integer('value').notNull()

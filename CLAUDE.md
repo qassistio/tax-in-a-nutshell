@@ -23,6 +23,7 @@ npm test              # vitest run (domain + server tests only, see vitest.confi
 npx vitest run <path>          # run a single test file
 npx vitest run -t "<name>"     # run tests matching a name
 npx vue-tsc --noEmit  # typecheck the whole app — run this after any change, not just npm run build
+npm run db:generate   # after editing server/db/schema.ts — drizzle-kit generate + rebuild migrations/list.ts
 ```
 
 There's no lint script configured. After any change, run `npx vue-tsc --noEmit` and `npm test` — both should
@@ -89,11 +90,20 @@ future extensions rather than making these functions' required inputs grow.
 ### Server (`server/api/`, `server/utils/`)
 
 The app is `ssr: false` and stores nothing server-side except **submission status**. `server/utils/db.ts` /
-`schema.ts` hold the one deliberate exception: a SQLite `submissions` table (via Node's built-in `node:sqlite`,
-wired through Drizzle's `sqlite-proxy` driver — `better-sqlite3` was tried and rejected because it needs a
-native build toolchain) storing gateway status metadata keyed by a GUID, so a results page can be reloaded —
-never any accounting figures or company financials. Two distinct external gateways are involved and their
-statuses (`hmrc_*` / `ch_*` columns) are tracked independently:
+`server/db/schema.ts` hold the one deliberate exception: a `submissions` table storing gateway status metadata
+keyed by a GUID, so a results page can be reloaded — never any accounting figures or company financials. The
+app is hosted on Vercel, whose serverless functions have no persistent filesystem, so the DB is accessed via
+`@libsql/client` + `drizzle-orm/libsql`, which speak to either a local SQLite file (dev) or a remote Turso
+database (production, via `NUXT_TURSO_DATABASE_URL`/`NUXT_TURSO_AUTH_TOKEN`) through the same client code —
+`server/utils/db.ts` throws on startup if running on Vercel (`process.env.VERCEL`) without a Turso URL
+configured, rather than silently falling back to a file that won't persist. Schema changes go through
+`npm run db:generate` (drizzle-kit), which writes a versioned `.sql` file under `server/db/migrations/`;
+`scripts/gen-migration-list.mjs` then bakes every migration's SQL into `server/db/migrations/list.ts` as plain
+TS constants (also run automatically as a `prebuild` step) since Nitro's bundled serverless output can't
+reliably read arbitrary files off disk at runtime. `getDb()` applies any migrations not yet recorded in a
+`_tin_migrations` tracking table on first connection, and caches the connection promise on `globalThis` (not a
+plain module variable) so Nitro's dev-mode HMR doesn't open a second client against the same file. Two distinct
+external gateways are involved and their statuses (`hmrc_*` / `ch_*` columns) are tracked independently:
 - HMRC's legacy GovTalk/XML CT600 gateway (`server/api/hmrc/*`) — IRmark computed server-side (needs a real
   XML DOM/C14N library), Government Gateway credentials supplied per-request from the browser, never stored.
 - Companies House's XML Gateway for accounts (`server/api/companies-house/submit-accounts.post.ts`,
