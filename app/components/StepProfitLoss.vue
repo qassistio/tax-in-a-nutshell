@@ -7,7 +7,7 @@ const { f, pnl } = props.wizard
 </script>
 
 <template>
-  <div class="step-kicker">Step 5</div>
+  <div class="step-kicker">Step {{ wizard.currentIndex.value + 1 }}</div>
   <h2>Profit and loss</h2>
   <p class="text-muted">FRS 105 permits an abridged profit and loss account — these are the figures it needs.</p>
 

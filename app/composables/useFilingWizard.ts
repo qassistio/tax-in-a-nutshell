@@ -8,6 +8,7 @@ import { createAuditEntry, buildTaxableProfitTrail, type AuditEntry, type AuditC
 import { hashArtefacts, createApprovalRecord, isApprovalStale, type ApprovalRecord } from '../domain/filing/approval'
 import type { GatewayReceipt } from '../domain/filing/submissionStatus'
 import { buildIrMarkHashingBody, buildGovTalkEnvelope, parseGovTalkResponse, type CtMessageClass } from '../domain/filing/govTalk'
+import { buildAccountsBase64, buildCompaniesHouseAccountsEnvelope } from '../domain/filing/companiesHouseGovTalk'
 import { generateAccountsIxbrl } from '../domain/ixbrl/accountsIxbrl'
 import { generateTaxComputationIxbrl } from '../domain/ixbrl/taxComputationIxbrl'
 import { diffFields, createAmendment, type Amendment } from '../domain/filing/amendments'
@@ -26,11 +27,14 @@ interface SubmissionRowDto {
   hmrc_message: string | null
   ch_status: string | null
   ch_message: string | null
+  ch_transaction_id: string | null
+  ch_submission_number: string | null
+  ch_raw_response: string | null
   updated_at: string
 }
 
 export type StepId =
-  | 'start' | 'company' | 'period' | 'balance' | 'pnl' | 'tax' | 'notes' | 'review' | 'declaration' | 'receipt'
+  | 'start' | 'company' | 'period' | 'balance' | 'pnl' | 'chSubmit' | 'tax' | 'notes' | 'review' | 'declaration' | 'receipt'
 
 const STEP_LABELS: Record<StepId, string> = {
   start: 'Start',
@@ -38,6 +42,7 @@ const STEP_LABELS: Record<StepId, string> = {
   period: 'Accounting period',
   balance: 'Balance sheet',
   pnl: 'Profit and loss',
+  chSubmit: 'Companies House',
   tax: 'Tax computation',
   notes: 'Notes',
   review: 'Review',
@@ -64,7 +69,11 @@ function emptyFields() {
     // notes
     avgEmployees: '', directorAdvances: '', commitments: '',
     // declaration
-    approver: '', approvalDate: '', declName: '', declRole: '', gwUser: '', gwPass: ''
+    approver: '', approvalDate: '', declName: '', declRole: '', gwUser: '', gwPass: '',
+    // Companies House XML Gateway credentials (see
+    // app/domain/filing/companiesHouseGovTalk.ts) — kept in browser memory
+    // only, same as gwUser/gwPass above, never persisted server-side.
+    chPresenterId: '', chAuthCode: '', chCompanyAuthCode: '', chPackageRef: '', chEmail: ''
   })
 }
 
@@ -96,9 +105,15 @@ export function useFilingWizard() {
     approval: null as ApprovalRecord | null,
     vendorId: '',
     testInLive: true,
+    // Companies House uses one URL for test and live traffic, chosen via
+    // a <GatewayTest> flag rather than a different message Class the way
+    // HMRC's testInLive above does — see companiesHouseGovTalk.ts.
+    chGatewayTest: true,
+    chTransactionSeq: 1,
     hmrcReceipt: null as GatewayReceipt | null,
     chReceipt: null as GatewayReceipt | null,
     submitting: false,
+    chSubmitting: false,
     submitError: '',
     amendments: [] as Amendment[],
     submissionId: '',
@@ -138,7 +153,15 @@ export function useFilingWizard() {
   const f = emptyFields()
 
   const order = computed<StepId[]>(() => {
+    // requirements.md §25 — accounts and CT600 are tracked as independent
+    // filings, submitted to two different gateways (Companies House's XML
+    // Gateway and HMRC's CT600 GovTalk gateway have no joint-filing API
+    // between them). When both are chosen, accounts go to Companies House
+    // first (there's a dedicated step for it, right after the figures
+    // that make them up) and the CT600/tax computation follows — see
+    // server/api/companies-house/submit-accounts.post.ts.
     const steps: StepId[] = ['start', 'company', 'period', 'balance', 'pnl']
+    if (state.filings.companiesHouse) steps.push('chSubmit')
     if (state.filings.ct600) steps.push('tax')
     steps.push('notes', 'review', 'declaration', 'receipt')
     return steps
@@ -314,6 +337,9 @@ export function useFilingWizard() {
         target: 'companiesHouse',
         status: row.ch_status as GatewayReceipt['status'],
         message: row.ch_message ?? undefined,
+        submissionId: row.ch_submission_number ?? undefined,
+        correlationId: row.ch_transaction_id ?? undefined,
+        rawResponse: row.ch_raw_response ?? undefined,
         timestamp: row.updated_at
       }
     }
@@ -367,22 +393,57 @@ export function useFilingWizard() {
     }
   }
 
-  async function prepareCompaniesHouse() {
+  /** Submits the accounts iXBRL to Companies House's real XML Gateway
+   *  (see app/domain/filing/companiesHouseGovTalk.ts) — Class AA,
+   *  GatewayTest-flagged, MD5-hashed presenter authentication. Follows
+   *  the same shape as submitToHmrc: build a hashing/auth step server-side
+   *  (MD5 isn't available in Web Crypto), build the envelope in the
+   *  browser, hand it to a server route to actually reach the gateway. */
+  async function submitToCompaniesHouse() {
+    state.chSubmitting = true
     try {
-      const res = await $fetch<{ id: string; message: string }>('/api/companies-house/prepare-accounts', {
+      const { senderIdHash, authValueHash } = await $fetch<{ senderIdHash: string; authValueHash: string }>('/api/companies-house/compute-auth', {
+        method: 'POST',
+        body: { presenterId: f.chPresenterId, presenterAuthCode: f.chAuthCode }
+      })
+
+      const transactionId = String(state.chTransactionSeq++)
+      const submissionNumber = crypto.randomUUID().replace(/-/g, '').slice(0, 20)
+
+      const envelopeXml = buildCompaniesHouseAccountsEnvelope({
+        credentials: {
+          presenterId: f.chPresenterId,
+          presenterAuthCode: f.chAuthCode,
+          companyAuthCode: f.chCompanyAuthCode,
+          packageReference: f.chPackageRef,
+          email: f.chEmail
+        },
+        gatewayTest: state.chGatewayTest,
+        companyNumber: f.companyNumber,
+        companyName: f.companyName,
+        transactionId,
+        submissionNumber,
+        accountsIxbrlBase64: buildAccountsBase64(accountsIxbrl.value),
+        senderIdHash, authValueHash
+      })
+
+      const res = await $fetch<{ id: string }>('/api/companies-house/submit-accounts', {
         method: 'POST',
         body: {
           id: state.submissionId || undefined,
-          accountsIxbrl: accountsIxbrl.value,
-          companyName: f.companyName,
-          periodEnd: f.periodEnd
+          envelopeXml, companyName: f.companyName, periodEnd: f.periodEnd,
+          transactionId, submissionNumber
         }
       })
-      state.submissionId = res.id
-      state.chReceipt = { target: 'companiesHouse', status: 'created', timestamp: new Date().toISOString(), message: res.message }
-      logEvent('submission', 'Accounts iXBRL prepared for Companies House filing (no third-party accounts API is available yet).')
+
+      const status = await $fetch<{ row: SubmissionRowDto }>(`/api/submissions/${res.id}`)
+      applySubmissionRow(status.row)
+      logEvent('submission', `Submitted to Companies House XML Gateway (Class AA, ${state.chGatewayTest ? 'test' : 'live'}) — status: ${status.row.ch_status}.`)
     } catch (err) {
       state.chReceipt = { target: 'companiesHouse', status: 'rejected', timestamp: new Date().toISOString(), message: (err as Error).message }
+      logEvent('submission', `Companies House submission failed: ${(err as Error).message}`)
+    } finally {
+      state.chSubmitting = false
     }
   }
 
@@ -452,7 +513,7 @@ export function useFilingWizard() {
     logEvent, figureTrail,
     approveFiling, checkApprovalStale,
     accountsIxbrl, taxComputationIxbrl,
-    submitToHmrc, prepareCompaniesHouse,
+    submitToHmrc, submitToCompaniesHouse,
     refreshSubmissionStatus, pollHmrcStatus,
     createAmendmentFromReceipt
   }

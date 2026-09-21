@@ -7,7 +7,7 @@ const { f, pnl, taxableTotalProfits, corporationTax } = props.wizard
 </script>
 
 <template>
-  <div class="step-kicker">Step 6</div>
+  <div class="step-kicker">Step {{ wizard.currentIndex.value + 1 }}</div>
   <h2>Tax computation</h2>
   <p class="text-muted">Adjustments from accounting profit to taxable profit, and the Corporation Tax due.</p>
 

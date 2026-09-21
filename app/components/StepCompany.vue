@@ -6,7 +6,7 @@ const { f } = props.wizard
 </script>
 
 <template>
-  <div class="step-kicker">Step 2</div>
+  <div class="step-kicker">Step {{ wizard.currentIndex.value + 1 }}</div>
   <h2>Company details</h2>
   <p class="text-muted">Match these exactly to Companies House and HMRC records.</p>
 

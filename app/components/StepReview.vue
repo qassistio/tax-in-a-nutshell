@@ -12,7 +12,7 @@ function goTo(step: string) {
 </script>
 
 <template>
-  <div class="step-kicker">Step {{ props.wizard.state.filings.ct600 ? 8 : 7 }}</div>
+  <div class="step-kicker">Step {{ props.wizard.currentIndex.value + 1 }}</div>
   <h2>Review</h2>
   <p class="text-muted">Check the figures below, and clear anything flagged before you declare and submit.</p>
 

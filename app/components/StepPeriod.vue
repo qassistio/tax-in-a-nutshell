@@ -6,7 +6,7 @@ const { f, deadlines } = props.wizard
 </script>
 
 <template>
-  <div class="step-kicker">Step 3</div>
+  <div class="step-kicker">Step {{ wizard.currentIndex.value + 1 }}</div>
   <h2>Accounting period</h2>
   <p class="text-muted">The period these accounts and return cover.</p>
 

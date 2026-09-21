@@ -6,7 +6,7 @@ const { f } = props.wizard
 </script>
 
 <template>
-  <div class="step-kicker">Step 7</div>
+  <div class="step-kicker">Step {{ wizard.currentIndex.value + 1 }}</div>
   <h2>Notes</h2>
   <p class="text-muted">FRS 105 requires a small number of notes alongside the accounts.</p>
 

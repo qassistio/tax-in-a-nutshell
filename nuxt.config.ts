@@ -19,7 +19,11 @@ export default defineNuxtConfig({
   // Nuxt maps runtimeConfig keys to NUXT_<KEY> automatically.
   runtimeConfig: {
     hmrcVendorId: '',
-    hmrcGatewayUrl: 'https://transaction-engine.tax.service.gov.uk/submission'
+    hmrcGatewayUrl: 'https://transaction-engine.tax.service.gov.uk/submission',
+    // Companies House XML Gateway — same URL for test and live traffic;
+    // see app/domain/filing/companiesHouseGovTalk.ts for how the two are
+    // distinguished (a <GatewayTest> flag, not a different URL or Class).
+    companiesHouseGatewayUrl: 'https://xmlgw.companieshouse.gov.uk/v1-0/xmlgw/Gateway'
   },
 
   app: {

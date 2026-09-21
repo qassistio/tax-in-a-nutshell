@@ -7,6 +7,7 @@ import StepCompany from './components/StepCompany.vue'
 import StepPeriod from './components/StepPeriod.vue'
 import StepBalance from './components/StepBalance.vue'
 import StepProfitLoss from './components/StepProfitLoss.vue'
+import StepCompaniesHouse from './components/StepCompaniesHouse.vue'
 import StepTax from './components/StepTax.vue'
 import StepNotes from './components/StepNotes.vue'
 import StepReview from './components/StepReview.vue'
@@ -26,6 +27,7 @@ const stepComponents: Record<StepId, Component> = {
   period: StepPeriod,
   balance: StepBalance,
   pnl: StepProfitLoss,
+  chSubmit: StepCompaniesHouse,
   tax: StepTax,
   notes: StepNotes,
   review: StepReview,

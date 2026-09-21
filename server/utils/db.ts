@@ -39,10 +39,28 @@ export function getDb(): DatabaseSync {
       hmrc_message TEXT,
       ch_status TEXT,
       ch_message TEXT,
+      ch_transaction_id TEXT,
+      ch_submission_number TEXT,
+      ch_raw_response TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
   `)
+  // No migration system exists here (see the module comment) — this
+  // store only ever holds disposable status metadata, so evolving the
+  // schema in place with idempotent ALTERs is simpler than a real
+  // migration runner. Existing .data/submissions.sqlite files created
+  // before these Companies House tracking columns existed just get them
+  // added; SQLite ignores an ALTER for a column that's already there,
+  // caught below since better/node:sqlite doesn't expose IF NOT EXISTS
+  // for ADD COLUMN.
+  for (const column of ['ch_transaction_id', 'ch_submission_number', 'ch_raw_response']) {
+    try {
+      db.exec(`ALTER TABLE submissions ADD COLUMN ${column} TEXT`)
+    } catch {
+      // already exists
+    }
+  }
   return db
 }
 
@@ -62,6 +80,9 @@ export interface SubmissionRow {
   hmrc_message: string | null
   ch_status: string | null
   ch_message: string | null
+  ch_transaction_id: string | null
+  ch_submission_number: string | null
+  ch_raw_response: string | null
   created_at: string
   updated_at: string
 }

@@ -8,7 +8,10 @@ async function submit() {
   if (!canSubmit.value) return
   await props.wizard.approveFiling()
   if (state.filings.ct600) await props.wizard.submitToHmrc()
-  if (state.filings.companiesHouse) await props.wizard.prepareCompaniesHouse()
+  // Normally already done at the dedicated Companies House step earlier in
+  // the wizard — this is just a fallback for anyone who jumped straight to
+  // Declaration via the step nav without visiting it.
+  if (state.filings.companiesHouse && !state.chReceipt) await props.wizard.submitToCompaniesHouse()
   props.wizard.move(1)
 }
 </script>

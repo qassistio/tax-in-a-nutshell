@@ -13,6 +13,16 @@
 // are re-issued periodically and this project has no automated check that
 // keeps these in sync.
 //
+// CORRECTED 2026-09-21: schemaRef below now points at the FRS-102 entry
+// point, not the "core" schema previously set here. Companies House's own
+// Technical Interface Specification for Accounts v5.9 states explicitly:
+// "Micro-entities (FRS 105) should use the FRS 102 entry point" — FRS 105
+// filers reference the FRS-102 taxonomy's entry-point XSD
+// (xbrl.frc.org.uk/FRS-102/...), not the shared "core" schema alone. The
+// "core" schema is still where the actual FRS 105 elements/definition
+// linkbase live (see maturityDimension below), but it is not the correct
+// schemaRef to declare in the instance document.
+//
 // KNOWN GAP: FRS 105's Periodic Review 2024 amendments took effect for
 // accounting periods beginning on or after 1 January 2026, and HMRC's CT
 // computational 2024 taxonomy is only confirmed valid for periods starting
@@ -50,7 +60,7 @@ export interface CtTaxonomy {
 
 const FRS105_2026: AccountsTaxonomy = {
   version: 'FRC Taxonomy Suite 2026 v1.0.0',
-  schemaRef: 'http://xbrl.frc.org.uk/fr/2026-01-01/core/frc-core-2026-01-01.xsd',
+  schemaRef: 'https://xbrl.frc.org.uk/FRS-102/2026-01-01/FRS-102-2026-01-01.xsd',
   namespace: 'http://xbrl.frc.org.uk/fr/2026-01-01/core',
   prefix: 'core',
   maturityDimension: {

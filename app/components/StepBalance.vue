@@ -7,7 +7,7 @@ const { state, f, balance } = props.wizard
 </script>
 
 <template>
-  <div class="step-kicker">Step 4</div>
+  <div class="step-kicker">Step {{ wizard.currentIndex.value + 1 }}</div>
   <h2>Balance sheet</h2>
   <p class="text-muted">FRS 105 micro-entity balance sheet, at the end of the accounting period.</p>
 

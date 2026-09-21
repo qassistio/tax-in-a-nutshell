@@ -50,7 +50,13 @@ export function generateAccountsIxbrl(input: AccountsIxbrlInput): string {
   const netAssets = fixedAndCurrent - balance.creditorsWithin - balance.creditorsAfter - balance.provisions
   const profitBeforeTax = pnl.turnover + pnl.otherIncome - pnl.rawMaterials - pnl.staffCosts - pnl.depreciation - pnl.otherCharges
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
+  // Companies House's Technical Interface Specification for Accounts v5.9
+  // requires the Instance's first line to be exactly
+  // `<?xml version="1.0"?>` with no additional whitespace in the string
+  // declaration — no encoding attribute. UTF-8 is XML's own default when
+  // none is declared, so dropping it here doesn't change how this is
+  // read, just satisfies that literal, synchronously-checked rule.
+  return `<?xml version="1.0"?>
 <html xmlns="http://www.w3.org/1999/xhtml"
       xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
       xmlns:ixt="http://www.xbrl.org/inlineXBRL/transformation/2015-02-26"
