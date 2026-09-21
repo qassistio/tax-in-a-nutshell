@@ -47,6 +47,12 @@ export interface TaxAdjustments {
   associatedCompanies: number
 }
 
+/** Prior-year balance sheet + profit and loss figures for the comparative
+ *  column (requirements.md §11) — same shape as this year's, kept as a
+ *  separate snapshot rather than merged into BalanceSheetFigures/
+ *  ProfitAndLossFigures so current and prior year can never be confused. */
+export interface ComparativeFigures extends BalanceSheetFigures, ProfitAndLossFigures {}
+
 export interface NotesAndApproval {
   avgEmployees: string
   directorAdvances: string

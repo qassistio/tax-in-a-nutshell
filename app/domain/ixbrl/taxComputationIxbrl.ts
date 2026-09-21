@@ -15,6 +15,7 @@
 import { ctTaxonomyFor } from './taxonomy'
 import type { CompanyDetails, AccountingPeriod, TaxAdjustments } from '../types'
 import type { CorporationTaxResult } from '../tax/corporationTax'
+import type { DirectorLoanResult } from '../tax/directorLoans'
 
 function esc(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -32,10 +33,20 @@ export interface TaxComputationIxbrlInput {
   profitBeforeTax: number
   adjustments: TaxAdjustments
   result: CorporationTaxResult
+  /** Trading losses brought forward and relieved this period
+   *  (requirements.md §14) — only shown when relief was actually used. */
+  lossesRelieved?: number
+  /** Section 455 / CT600A assessment on the director's loan account
+   *  (requirements.md §15/§17) — only shown when a CT600A is required. */
+  directorLoan?: DirectorLoanResult
+  /** The loan balance the assessment above was calculated from — kept
+   *  separate so CT600A shows the actual balance even when s455Due is
+   *  £0 (loan repaid before the due date, but still reportable). */
+  directorLoanBalance?: number
 }
 
 export function generateTaxComputationIxbrl(input: TaxComputationIxbrlInput): string {
-  const { company, period, profitBeforeTax, adjustments, result } = input
+  const { company, period, profitBeforeTax, adjustments, result, lossesRelieved, directorLoan, directorLoanBalance } = input
   const taxonomy = ctTaxonomyFor(period.periodEnd)
   const p = taxonomy.prefix
 
@@ -85,10 +96,18 @@ export function generateTaxComputationIxbrl(input: TaxComputationIxbrlInput): st
     <tr><td>Add: client entertaining</td><td>${fact('AdjustmentsEntertaining', p, cDuration, uGBP, adjustments.addEntertaining, 'f-addent')}</td></tr>
     <tr><td>Less: capital allowances</td><td>${fact('TotalCapitalAllowances', p, cDuration, uGBP, adjustments.capAllowances, 'f-capall')}</td></tr>
     <tr><td>Trading profit</td><td>${fact('NetTradingProfits', p, cDuration, uGBP, tradingProfit, 'f-tradeprofit')}</td></tr>
+    ${lossesRelieved ? `<tr><td>Less: losses brought forward relieved</td><td>${fact('LossesBroughtForward', p, cDuration, uGBP, lossesRelieved, 'f-lossrelief')}</td></tr>` : ''}
     <tr><td>Taxable total profits</td><td>${fact('TotalProfitsChargeableToCorporationTax', p, cDuration, uGBP, result.taxableTotalProfits, 'f-ttp')}</td></tr>
     <tr><td>Corporation Tax chargeable (${esc(result.rates.version)})</td><td>${fact('CorporationTaxChargeable', p, cDuration, uGBP, result.corporationTax, 'f-cttax')}</td></tr>
   </table>
   <p>${esc(result.rateNote)}</p>
+
+  ${directorLoan?.ct600aRequired ? `<h2>CT600A — Loans to participators</h2>
+  <table>
+    <tr><td>Director's loan account balance at period end</td><td>${fact('LoanBalanceOutstanding', p, cDuration, uGBP, directorLoanBalance ?? 0, 'f-loanbalance')}</td></tr>
+    <tr><td>Section 455 tax due</td><td>${fact('TaxOnLoansToParticipators', p, cDuration, uGBP, directorLoan.s455Due, 'f-s455')}</td></tr>
+  </table>
+  <p>${esc(directorLoan.explanation)}</p>` : ''}
 
   <p><em>Draft structural document — element names were checked against a downloaded copy of the
   ${esc(taxonomy.version)} taxonomy pack, but that check was a one-off manual exercise, not an

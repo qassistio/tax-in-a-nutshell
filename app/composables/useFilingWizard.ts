@@ -2,6 +2,11 @@ import { computed, reactive } from 'vue'
 import type { FilingSelection } from '../domain/types'
 import { balanceSheetTotals, profitAndLossTotals, parsePounds, formatPounds } from '../domain/accounting/totals'
 import { ratesFor, calculateCorporationTax } from '../domain/tax/corporationTax'
+import { capitalAllowanceRatesFor, calculateCapitalAllowances } from '../domain/tax/capitalAllowances'
+import { applyLossRelief } from '../domain/tax/losses'
+import { directorLoanRatesFor, assessDirectorLoan } from '../domain/tax/directorLoans'
+import { findEligibilityProblems, type EligibilityAnswers } from '../domain/eligibility/eligibility'
+import { previousPeriodFor } from '../domain/accounting/comparatives'
 import { calculateDeadlines } from '../domain/filing/deadlines'
 import { findProblems, findMissingAmountFields, MICRO_ENTITY_TURNOVER_LIMIT, REQUIRED_AMOUNT_FIELDS } from '../domain/validation/problems'
 import { createAuditEntry, buildTaxableProfitTrail, type AuditEntry, type AuditCategory } from '../domain/audit/auditTrail'
@@ -33,13 +38,16 @@ interface SubmissionRowDto {
 }
 
 export type StepId =
-  | 'start' | 'company' | 'period' | 'balance' | 'pnl' | 'chSubmit' | 'tax' | 'notes' | 'review' | 'declaration' | 'receipt'
+  | 'start' | 'eligibility' | 'company' | 'period' | 'balance' | 'comparatives' | 'pnl' | 'chSubmit' | 'tax'
+  | 'notes' | 'review' | 'declaration' | 'receipt'
 
 const STEP_LABELS: Record<StepId, string> = {
   start: 'Start',
+  eligibility: 'Eligibility',
   company: 'Company',
   period: 'Accounting period',
   balance: 'Balance sheet',
+  comparatives: 'Prior year comparatives',
   pnl: 'Profit and loss',
   chSubmit: 'Companies House',
   tax: 'Tax computation',
@@ -54,6 +62,8 @@ const STEP_LABELS: Record<StepId, string> = {
  *  layer, not here. Nothing is pre-filled: this is a blank return. */
 function emptyFields() {
   return reactive({
+    // eligibility (requirements.md §3.2/§34) — 'yes' | 'no' | ''
+    eligAudited: '', eligGroup: '', eligOverseas: '', eligSpecialistRelief: '',
     // company
     companyName: '', companyNumber: '', utr: '', address: '', postcode: '', sic: '',
     // accounting period
@@ -61,10 +71,21 @@ function emptyFields() {
     // balance sheet
     unpaidCapital: '', fixedAssets: '', currentAssets: '', prepayments: '',
     creditorsWithin: '', creditorsAfter: '', provisions: '', shareCapital: '', retained: '',
+    // prior-year comparatives (requirements.md §11) — same shape as the
+    // balance sheet/P&L above, only asked for/required when firstPeriod
+    // !== 'yes'
+    cmpUnpaidCapital: '', cmpFixedAssets: '', cmpCurrentAssets: '', cmpPrepayments: '',
+    cmpCreditorsWithin: '', cmpCreditorsAfter: '', cmpProvisions: '', cmpShareCapital: '', cmpRetained: '',
+    cmpTurnover: '', cmpOtherIncome: '', cmpRawMaterials: '', cmpStaffCosts: '', cmpDepreciation: '', cmpOtherCharges: '',
     // profit and loss
     turnover: '', otherIncome: '', rawMaterials: '', staffCosts: '', depreciation: '', otherCharges: '',
-    // tax computation
-    addDepreciation: '', addEntertaining: '', capAllowances: '', associated: '',
+    // tax computation — capital allowances are computed from these three
+    // (requirements.md §12), not typed in directly; same for losses and
+    // the director loan / s.455 charge below.
+    addDepreciation: '', addEntertaining: '', associated: '',
+    caPoolBroughtForward: '', caAdditions: '', caDisposals: '',
+    lossesBroughtForward: '',
+    directorLoanBalance: '', directorLoanRepaidBeforeDue: '',
     // notes
     avgEmployees: '', directorAdvances: '', commitments: '',
     // declaration
@@ -127,7 +148,9 @@ export function useFilingWizard() {
     staffCosts: 'Staff costs', depreciation: 'Depreciation', otherCharges: 'Other charges',
     fixedAssets: 'Fixed assets', currentAssets: 'Current assets', retained: 'Retained earnings',
     addDepreciation: 'Depreciation added back', addEntertaining: 'Entertaining added back',
-    capAllowances: 'Capital allowances'
+    caPoolBroughtForward: 'Capital allowances pool brought forward', caAdditions: 'Capital allowances: additions',
+    caDisposals: 'Capital allowances: disposals', lossesBroughtForward: 'Trading losses brought forward',
+    directorLoanBalance: 'Director loan account balance'
   }
 
   /** requirements.md §31 — chains a new Amendment from a previously
@@ -192,7 +215,12 @@ export function useFilingWizard() {
     // first (there's a dedicated step for it, right after the figures
     // that make them up) and the CT600/tax computation follows — see
     // server/api/companies-house/submit-accounts.post.ts.
-    const steps: StepId[] = ['start', 'company', 'period', 'balance', 'pnl']
+    const steps: StepId[] = ['start', 'eligibility', 'company', 'period', 'balance']
+    // requirements.md §11 — a first accounting period has nothing to
+    // compare to, so the comparatives step only appears once the filer
+    // has said (on the period step) that this isn't their first period.
+    if (f.firstPeriod !== 'yes') steps.push('comparatives')
+    steps.push('pnl')
     if (state.filings.companiesHouse) steps.push('chSubmit')
     if (state.filings.ct600) steps.push('tax')
     steps.push('notes', 'review', 'declaration', 'receipt')
@@ -232,9 +260,33 @@ export function useFilingWizard() {
     otherCharges: parsePounds(f.otherCharges)
   }))
 
-  const taxableTotalProfits = computed(() =>
-    pnl.value.profitBeforeTax + parsePounds(f.addDepreciation) + parsePounds(f.addEntertaining) - parsePounds(f.capAllowances)
+  // --- Eligibility (requirements.md §3.2/§34) ---
+  const eligibilityAnswers = computed<EligibilityAnswers>(() => ({
+    audited: f.eligAudited, group: f.eligGroup, overseas: f.eligOverseas, specialistRelief: f.eligSpecialistRelief
+  }))
+
+  // --- Capital allowances (requirements.md §12) — AIA then main-pool WDA
+  // over the aggregate additions/disposals/pool-brought-forward the filer
+  // enters, in place of a per-asset register. ---
+  const capitalAllowanceRates = computed(() => capitalAllowanceRatesFor(f.periodEnd || new Date()))
+  const capitalAllowances = computed(() => calculateCapitalAllowances({
+    poolBroughtForward: parsePounds(f.caPoolBroughtForward),
+    additions: parsePounds(f.caAdditions),
+    disposals: parsePounds(f.caDisposals),
+    rates: capitalAllowanceRates.value
+  }))
+
+  // --- Trading losses (requirements.md §14) — brought-forward losses
+  // relieved against the trading result after capital allowances. ---
+  const tradingResultAfterCapitalAllowances = computed(() =>
+    pnl.value.profitBeforeTax + parsePounds(f.addDepreciation) + parsePounds(f.addEntertaining) - capitalAllowances.value.totalAllowances
   )
+  const lossRelief = computed(() => applyLossRelief({
+    tradingResult: tradingResultAfterCapitalAllowances.value,
+    lossesBroughtForward: parsePounds(f.lossesBroughtForward)
+  }))
+
+  const taxableTotalProfits = computed(() => lossRelief.value.taxableAfterLosses)
 
   const rates = computed(() => ratesFor(f.periodEnd || new Date()))
 
@@ -242,11 +294,27 @@ export function useFilingWizard() {
     calculateCorporationTax(taxableTotalProfits.value, parsePounds(f.associated), rates.value)
   )
 
+  // --- Director loans / Section 455 / CT600A (requirements.md §15/§17) ---
+  const directorLoanRates = computed(() => directorLoanRatesFor(f.periodEnd || new Date()))
+  const directorLoanAssessment = computed(() => assessDirectorLoan({
+    balanceAtPeriodEnd: parsePounds(f.directorLoanBalance),
+    repaidBeforeDue: f.directorLoanRepaidBeforeDue === 'yes'
+  }, directorLoanRates.value))
+
+  /** Corporation Tax plus any Section 455 charge — the total amount due
+   *  to HMRC for the period, shown on review/receipt. */
+  const totalTaxPayable = computed(() => corporationTax.value.corporationTax + directorLoanAssessment.value.s455Due)
+
   const deadlines = computed(() => calculateDeadlines(f.periodStart, f.periodEnd))
 
   const problems = computed(() => {
-    const applicableSteps = new Set(['balance', 'pnl', ...(state.filings.ct600 ? ['tax'] : [])])
+    const applicableSteps = new Set([
+      'balance', 'pnl',
+      ...(f.firstPeriod !== 'yes' ? ['comparatives'] : []),
+      ...(state.filings.ct600 ? ['tax'] : [])
+    ])
     return [
+      ...findEligibilityProblems(eligibilityAnswers.value),
       ...findMissingAmountFields(f, applicableSteps),
       ...findProblems({
         balance: balance.value,
@@ -256,7 +324,9 @@ export function useFilingWizard() {
         turnover: parsePounds(f.turnover),
         addBackDepreciation: parsePounds(f.addDepreciation),
         accountsDepreciation: parsePounds(f.depreciation),
-        microEntityTurnoverLimit: MICRO_ENTITY_TURNOVER_LIMIT
+        microEntityTurnoverLimit: MICRO_ENTITY_TURNOVER_LIMIT,
+        directorLoanBalance: parsePounds(f.directorLoanBalance),
+        directorLoanRepaidAnswered: !!f.directorLoanRepaidBeforeDue
       })
     ]
   })
@@ -280,9 +350,15 @@ export function useFilingWizard() {
       REQUIRED_AMOUNT_FIELDS.filter(x => x.step === s).every(x => String((f as Record<string, string>)[x.key] ?? '').trim())
     switch (step) {
       case 'start': return true
+      // "Own fields filled" means every question answered, not that the
+      // company necessarily passed — a scope failure is still an error on
+      // the review screen (via findEligibilityProblems), it just doesn't
+      // block moving on to see the rest of the wizard.
+      case 'eligibility': return !!(f.eligAudited && f.eligGroup && f.eligOverseas && f.eligSpecialistRelief)
       case 'company': return !!(f.companyName.trim() && f.companyNumber.trim() && f.utr.trim())
       case 'period': return !!(f.periodStart && f.periodEnd)
       case 'balance': return amountFieldsFor('balance')
+      case 'comparatives': return f.firstPeriod === 'yes' || amountFieldsFor('comparatives')
       case 'pnl': return amountFieldsFor('pnl')
       case 'chSubmit': return true
       case 'tax': return amountFieldsFor('tax')
@@ -316,9 +392,10 @@ export function useFilingWizard() {
   const figureTrail = computed(() => buildTaxableProfitTrail({
     taxableTotalProfits: taxableTotalProfits.value,
     profitBeforeTax: pnl.value.profitBeforeTax,
+    lossesRelieved: lossRelief.value.reliefUsed,
     addDepreciation: parsePounds(f.addDepreciation),
     addEntertaining: parsePounds(f.addEntertaining),
-    capAllowances: parsePounds(f.capAllowances),
+    capAllowances: capitalAllowances.value.totalAllowances,
     importedFrom: state.importedFileName
       ? { fileName: state.importedFileName, rowCount: state.importRows.length }
       : undefined
@@ -358,8 +435,28 @@ export function useFilingWizard() {
   }))
   const adjustments = computed(() => ({
     addDepreciation: parsePounds(f.addDepreciation), addEntertaining: parsePounds(f.addEntertaining),
-    capAllowances: parsePounds(f.capAllowances), associatedCompanies: parsePounds(f.associated)
+    capAllowances: capitalAllowances.value.totalAllowances, associatedCompanies: parsePounds(f.associated)
   }))
+
+  // requirements.md §11 — the comparative period is derived from the
+  // current period's start date (one year immediately before it); only
+  // built (and only asked for) when this isn't the company's first period.
+  const comparativePeriod = computed(() => f.firstPeriod !== 'yes' ? previousPeriodFor(f.periodStart) : null)
+  const comparative = computed(() => {
+    if (f.firstPeriod === 'yes' || !comparativePeriod.value) return undefined
+    return {
+      period: { ...comparativePeriod.value, firstPeriod: false },
+      figures: {
+        unpaidCapital: parsePounds(f.cmpUnpaidCapital), fixedAssets: parsePounds(f.cmpFixedAssets),
+        currentAssets: parsePounds(f.cmpCurrentAssets), prepayments: parsePounds(f.cmpPrepayments),
+        creditorsWithin: parsePounds(f.cmpCreditorsWithin), creditorsAfter: parsePounds(f.cmpCreditorsAfter),
+        provisions: parsePounds(f.cmpProvisions), shareCapital: parsePounds(f.cmpShareCapital), retained: parsePounds(f.cmpRetained),
+        turnover: parsePounds(f.cmpTurnover), otherIncome: parsePounds(f.cmpOtherIncome),
+        rawMaterials: parsePounds(f.cmpRawMaterials), staffCosts: parsePounds(f.cmpStaffCosts),
+        depreciation: parsePounds(f.cmpDepreciation), otherCharges: parsePounds(f.cmpOtherCharges)
+      }
+    }
+  })
 
   const accountsIxbrl = computed(() => generateAccountsIxbrl({
     company: company.value, period: period.value,
@@ -373,14 +470,18 @@ export function useFilingWizard() {
       turnover: parsePounds(f.turnover), otherIncome: parsePounds(f.otherIncome),
       rawMaterials: parsePounds(f.rawMaterials), staffCosts: parsePounds(f.staffCosts),
       depreciation: parsePounds(f.depreciation), otherCharges: parsePounds(f.otherCharges)
-    }
+    },
+    comparative: comparative.value
   }))
 
   const taxComputationIxbrl = computed(() => generateTaxComputationIxbrl({
     company: company.value, period: period.value,
     profitBeforeTax: pnl.value.profitBeforeTax,
     adjustments: adjustments.value,
-    result: corporationTax.value
+    result: corporationTax.value,
+    lossesRelieved: lossRelief.value.reliefUsed,
+    directorLoan: directorLoanAssessment.value,
+    directorLoanBalance: parsePounds(f.directorLoanBalance)
   }))
 
   /** Maps the SQLite-backed status row onto the two GatewayReceipt values
@@ -572,6 +673,11 @@ export function useFilingWizard() {
     order, currentIndex, go, move, stepStatus, isStepUnlocked,
     STEP_LABELS,
     balance, pnl, taxableTotalProfits, rates, corporationTax, deadlines,
+    eligibilityAnswers,
+    capitalAllowanceRates, capitalAllowances,
+    lossRelief,
+    directorLoanRates, directorLoanAssessment, totalTaxPayable,
+    comparativePeriod,
     problems, errorSteps, warnSteps, canSubmit,
     GUIDED_BALANCE_FIELDS, guidedField, guidedTotal, guidedNext, guidedBack,
     importOpenDialog, importClose, importFile, importApply,

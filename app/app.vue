@@ -3,9 +3,11 @@ import { onMounted, watch, type Component } from 'vue'
 import { useFilingWizard } from './composables/useFilingWizard'
 import type { StepId } from './composables/useFilingWizard'
 import StepStart from './components/StepStart.vue'
+import StepEligibility from './components/StepEligibility.vue'
 import StepCompany from './components/StepCompany.vue'
 import StepPeriod from './components/StepPeriod.vue'
 import StepBalance from './components/StepBalance.vue'
+import StepComparatives from './components/StepComparatives.vue'
 import StepProfitLoss from './components/StepProfitLoss.vue'
 import StepCompaniesHouse from './components/StepCompaniesHouse.vue'
 import StepTax from './components/StepTax.vue'
@@ -23,9 +25,11 @@ const { state, order, STEP_LABELS } = wizard
 // <component :is="..."> can't be resolved at runtime.
 const stepComponents: Record<StepId, Component> = {
   start: StepStart,
+  eligibility: StepEligibility,
   company: StepCompany,
   period: StepPeriod,
   balance: StepBalance,
+  comparatives: StepComparatives,
   pnl: StepProfitLoss,
   chSubmit: StepCompaniesHouse,
   tax: StepTax,

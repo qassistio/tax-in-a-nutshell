@@ -20,7 +20,9 @@ const balancedInputs = (): ProblemInputs => ({
   turnover: 100_000,
   addBackDepreciation: 500,
   accountsDepreciation: 500,
-  microEntityTurnoverLimit: MICRO_ENTITY_TURNOVER_LIMIT
+  microEntityTurnoverLimit: MICRO_ENTITY_TURNOVER_LIMIT,
+  directorLoanBalance: 0,
+  directorLoanRepaidAnswered: false
 })
 
 describe('findProblems', () => {
@@ -61,6 +63,16 @@ describe('findProblems', () => {
   it('warns when the depreciation add-back does not match the accounts', () => {
     const problems = findProblems({ ...balancedInputs(), addBackDepreciation: 600, accountsDepreciation: 500 })
     expect(problems.find(p => p.id === 'depreciation-mismatch')).toMatchObject({ sev: 'warn', step: 'tax' })
+  })
+
+  it('flags an outstanding director loan whose repayment status is unanswered', () => {
+    const problems = findProblems({ ...balancedInputs(), directorLoanBalance: 5_000, directorLoanRepaidAnswered: false })
+    expect(problems.find(p => p.id === 'director-loan-repaid-unanswered')).toMatchObject({ sev: 'error', step: 'tax' })
+  })
+
+  it('does not flag a director loan once its repayment status is answered', () => {
+    const problems = findProblems({ ...balancedInputs(), directorLoanBalance: 5_000, directorLoanRepaidAnswered: true })
+    expect(problems.find(p => p.id === 'director-loan-repaid-unanswered')).toBeUndefined()
   })
 })
 

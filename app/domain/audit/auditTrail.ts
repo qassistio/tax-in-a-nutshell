@@ -33,6 +33,10 @@ export interface FigureTrailStep {
 export function buildTaxableProfitTrail(input: {
   taxableTotalProfits: number
   profitBeforeTax: number
+  /** Trading losses brought forward and relieved against this period's
+   *  profit (requirements.md §14) — only shown when relief was actually
+   *  used, so callers that don't track losses don't have to pass 0. */
+  lossesRelieved?: number
   addDepreciation: number
   addEntertaining: number
   capAllowances: number
@@ -46,6 +50,9 @@ export function buildTaxableProfitTrail(input: {
     { label: '+ Client entertaining added back', detail: 'Not an allowable deduction for Corporation Tax', amount: input.addEntertaining },
     { label: '− Capital allowances', detail: 'Allowable in place of depreciation', amount: -input.capAllowances }
   ]
+  if (input.lossesRelieved) {
+    steps.push({ label: '− Losses brought forward relieved', detail: 'Brought-forward trading losses set against this period’s profit', amount: -input.lossesRelieved })
+  }
   if (input.importedFrom) {
     steps.push({
       label: 'Trial balance',

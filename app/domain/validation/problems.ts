@@ -11,6 +11,8 @@ export interface ProblemInputs {
   addBackDepreciation: number
   accountsDepreciation: number
   microEntityTurnoverLimit: number
+  directorLoanBalance: number
+  directorLoanRepaidAnswered: boolean
 }
 
 /** The eligibility/validation engine requirements.md §21 asks for, scoped
@@ -79,6 +81,16 @@ export function findProblems(inputs: ProblemInputs): FilingProblem[] {
     })
   }
 
+  if (inputs.directorLoanBalance > 0 && !inputs.directorLoanRepaidAnswered) {
+    problems.push({
+      id: 'director-loan-repaid-unanswered',
+      sev: 'error',
+      step: 'tax',
+      title: 'Director loan repayment status not answered',
+      detail: 'There is an outstanding director loan balance — say whether it was repaid before the Section 455 due date so CT600A can be completed correctly.'
+    })
+  }
+
   return problems
 }
 
@@ -109,7 +121,29 @@ export const REQUIRED_AMOUNT_FIELDS: Array<{ key: string; label: string; step: s
   { key: 'otherCharges', label: 'Other charges', step: 'pnl' },
   { key: 'addDepreciation', label: 'Add back: depreciation', step: 'tax' },
   { key: 'addEntertaining', label: 'Add back: client entertaining', step: 'tax' },
-  { key: 'capAllowances', label: 'Less: capital allowances', step: 'tax' }
+  { key: 'caPoolBroughtForward', label: 'Capital allowances pool brought forward', step: 'tax' },
+  { key: 'caAdditions', label: 'Capital allowances: qualifying additions', step: 'tax' },
+  { key: 'caDisposals', label: 'Capital allowances: disposal proceeds', step: 'tax' },
+  { key: 'lossesBroughtForward', label: 'Trading losses brought forward', step: 'tax' },
+  { key: 'directorLoanBalance', label: 'Director loan account balance at period end', step: 'tax' },
+  // requirements.md §11 — only required for a second-or-later accounting
+  // period; the wizard only marks 'comparatives' applicable when
+  // f.firstPeriod !== 'yes' (see useFilingWizard.ts).
+  { key: 'cmpUnpaidCapital', label: 'Prior year: called up share capital not paid', step: 'comparatives' },
+  { key: 'cmpFixedAssets', label: 'Prior year: fixed assets', step: 'comparatives' },
+  { key: 'cmpCurrentAssets', label: 'Prior year: current assets', step: 'comparatives' },
+  { key: 'cmpPrepayments', label: 'Prior year: prepayments and accrued income', step: 'comparatives' },
+  { key: 'cmpCreditorsWithin', label: 'Prior year: creditors due within one year', step: 'comparatives' },
+  { key: 'cmpCreditorsAfter', label: 'Prior year: creditors due after more than one year', step: 'comparatives' },
+  { key: 'cmpProvisions', label: 'Prior year: provisions for liabilities', step: 'comparatives' },
+  { key: 'cmpShareCapital', label: 'Prior year: called up share capital', step: 'comparatives' },
+  { key: 'cmpRetained', label: 'Prior year: profit and loss account', step: 'comparatives' },
+  { key: 'cmpTurnover', label: 'Prior year: turnover', step: 'comparatives' },
+  { key: 'cmpOtherIncome', label: 'Prior year: other income', step: 'comparatives' },
+  { key: 'cmpRawMaterials', label: 'Prior year: cost of raw materials and consumables', step: 'comparatives' },
+  { key: 'cmpStaffCosts', label: 'Prior year: staff costs', step: 'comparatives' },
+  { key: 'cmpDepreciation', label: 'Prior year: depreciation and other amounts written off assets', step: 'comparatives' },
+  { key: 'cmpOtherCharges', label: 'Prior year: other charges', step: 'comparatives' }
 ]
 
 /** Flags every required amount field left blank. Zero is a perfectly

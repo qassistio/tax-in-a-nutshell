@@ -4,7 +4,7 @@ import { formatPounds } from '../domain/accounting/totals'
 import type { StepId } from '../composables/useFilingWizard'
 
 const props = defineProps<{ wizard: ReturnType<typeof useFilingWizard> }>()
-const { f, balance, pnl, corporationTax, problems, STEP_LABELS, figureTrail } = props.wizard
+const { f, balance, pnl, corporationTax, problems, STEP_LABELS, figureTrail, directorLoanAssessment, totalTaxPayable, comparativePeriod } = props.wizard
 
 function goTo(step: string) {
   props.wizard.go(step as StepId)
@@ -46,6 +46,11 @@ function goTo(step: string) {
   <h4>Profit and loss</h4>
   <p>Turnover £{{ formatPounds(wizard.f.turnover ? Number(wizard.f.turnover) : 0) }} · Profit before tax £{{ formatPounds(pnl.profitBeforeTax) }}</p>
 
+  <template v-if="comparativePeriod">
+    <h4>Prior year comparatives</h4>
+    <p>Comparing against the period ended {{ comparativePeriod.periodEnd }}.</p>
+  </template>
+
   <template v-if="props.wizard.state.filings.ct600">
     <h4>Corporation Tax</h4>
     <p>Taxable total profits £{{ formatPounds(corporationTax.taxableTotalProfits) }} · Tax due £{{ formatPounds(corporationTax.corporationTax) }} ({{ corporationTax.rates.version }})</p>
@@ -58,6 +63,18 @@ function goTo(step: string) {
         <br><span class="text-muted" style="font-size: 13px;">{{ step.detail }}</span>
       </li>
     </ol>
+
+    <template v-if="directorLoanAssessment.ct600aRequired">
+      <h4>Director's loan / CT600A</h4>
+      <p>
+        CT600A required
+        <template v-if="directorLoanAssessment.s455Due"> · Section 455 due £{{ formatPounds(directorLoanAssessment.s455Due) }}</template>
+      </p>
+      <p class="text-muted" style="font-size: 13px;">{{ directorLoanAssessment.explanation }}</p>
+    </template>
+
+    <h4>Total tax payable</h4>
+    <p>£{{ formatPounds(totalTaxPayable) }}</p>
   </template>
 
   <div class="step-footer">
