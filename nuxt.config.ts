@@ -1,4 +1,9 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+// The canonical production origin — used to build absolute URLs for
+// canonical links, Open Graph/Twitter tags, and public/sitemap.xml.
+// Overridable via NUXT_PUBLIC_SITE_URL if that ever changes.
+const SITE_URL = process.env.NUXT_PUBLIC_SITE_URL || 'https://taxinanutshell.co.uk'
+
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: true },
@@ -43,14 +48,41 @@ export default defineNuxtConfig({
     // have the filer type them in — requirements.md §3.1. Set via
     // NUXT_COMPANIES_HOUSE_API_KEY — see
     // server/api/companies-house/search.get.ts and company/[number].get.ts.
-    companiesHouseApiKey: ''
+    companiesHouseApiKey: '',
+
+    // Public — readable in the browser, unlike everything above.
+    public: {
+      siteUrl: SITE_URL
+    }
   },
 
   app: {
     head: {
-      title: 'TaxInANutshell',
+      htmlAttrs: { lang: 'en-GB' },
+      // No pages/ router — this is a single-screen wizard (app/app.vue) —
+      // so there's no per-page title to template; the full descriptive
+      // title lives here rather than behind a titleTemplate suffix.
+      title: 'TaxInANutshell — File your Company Tax Return & micro-entity accounts',
       meta: [
-        { name: 'description', content: 'Micro-entity accounts and Company Tax Return filing, held in your browser only.' }
+        { name: 'description', content: 'File your UK Company Tax Return (CT600) and FRS 105 micro-entity accounts straight to HMRC and Companies House — free, no accountant or filing software to buy, done in your browser in one sitting.' },
+        { name: 'robots', content: 'index, follow' },
+        { name: 'theme-color', content: '#ffffff' },
+
+        // Open Graph — used by Facebook, LinkedIn, Slack, WhatsApp, etc.
+        { property: 'og:type', content: 'website' },
+        { property: 'og:site_name', content: 'TaxInANutshell' },
+        { property: 'og:title', content: 'TaxInANutshell — File your Company Tax Return & micro-entity accounts' },
+        { property: 'og:description', content: 'File your UK Company Tax Return (CT600) and FRS 105 micro-entity accounts straight to HMRC and Companies House — free, no accountant or filing software to buy, done in your browser in one sitting.' },
+        { property: 'og:url', content: SITE_URL },
+        { property: 'og:image', content: `${SITE_URL}/assets/icons/web-app-manifest-512x512.png` },
+        { property: 'og:locale', content: 'en_GB' },
+
+        // Twitter/X card — falls back to the Open Graph tags above for
+        // everything except card type, so kept minimal.
+        { name: 'twitter:card', content: 'summary' },
+        { name: 'twitter:title', content: 'TaxInANutshell — File your Company Tax Return & micro-entity accounts' },
+        { name: 'twitter:description', content: 'File your UK Company Tax Return (CT600) and FRS 105 micro-entity accounts straight to HMRC and Companies House — free.' },
+        { name: 'twitter:image', content: `${SITE_URL}/assets/icons/web-app-manifest-512x512.png` }
       ],
       link: [
         { rel: 'stylesheet', href: 'https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;1,400&display=swap' },
@@ -58,7 +90,32 @@ export default defineNuxtConfig({
         { rel: 'icon', type: 'image/svg+xml', href: '/assets/icons/favicon.svg' },
         { rel: 'shortcut icon', href: '/assets/icons/favicon.ico' },
         { rel: 'apple-touch-icon', sizes: '180x180', href: '/assets/icons/apple-touch-icon.png' },
-        { rel: 'manifest', href: '/assets/icons/site.webmanifest' }
+        { rel: 'manifest', href: '/assets/icons/site.webmanifest' },
+        { rel: 'canonical', href: SITE_URL }
+      ],
+      script: [
+        {
+          type: 'application/ld+json',
+          innerHTML: JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'WebApplication',
+            name: 'TaxInANutshell',
+            url: SITE_URL,
+            description: 'File your UK Company Tax Return (CT600) and FRS 105 micro-entity accounts straight to HMRC and Companies House — free, no accountant or filing software to buy, done in your browser in one sitting.',
+            applicationCategory: 'FinanceApplication',
+            operatingSystem: 'Any (web browser)',
+            offers: {
+              '@type': 'Offer',
+              price: '0',
+              priceCurrency: 'GBP'
+            },
+            publisher: {
+              '@type': 'Organization',
+              name: 'QAssist',
+              url: 'https://qassist.io'
+            }
+          })
+        }
       ]
     }
   }

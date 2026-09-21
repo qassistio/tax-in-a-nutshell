@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hand-written, not generated: the app is a single-page wizard (app/app.vue,
+  no pages/ router) so there is exactly one indexable URL. Bump <lastmod>
+  when the page's content changes meaningfully.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://taxinanutshell.co.uk/</loc>
+    <lastmod>2026-09-21</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>
