@@ -7,7 +7,6 @@ import StepEligibility from './components/StepEligibility.vue'
 import StepCompany from './components/StepCompany.vue'
 import StepPeriod from './components/StepPeriod.vue'
 import StepBalance from './components/StepBalance.vue'
-import StepComparatives from './components/StepComparatives.vue'
 import StepProfitLoss from './components/StepProfitLoss.vue'
 import StepCompaniesHouse from './components/StepCompaniesHouse.vue'
 import StepTax from './components/StepTax.vue'
@@ -16,6 +15,12 @@ import StepReview from './components/StepReview.vue'
 import StepDeclaration from './components/StepDeclaration.vue'
 import StepReceipt from './components/StepReceipt.vue'
 import ImportTrialBalanceDialog from './components/ImportTrialBalanceDialog.vue'
+import StepProblems from './components/StepProblems.vue'
+
+// Review already lists every outstanding problem itself (with "jump to
+// step" links), and start/receipt never have any — so StepProblems only
+// renders in between, right above whichever step is current.
+const STEPS_WITHOUT_INLINE_PROBLEMS = new Set<StepId>(['start', 'review', 'receipt'])
 
 const wizard = useFilingWizard()
 const { state, order, STEP_LABELS } = wizard
@@ -29,7 +34,6 @@ const stepComponents: Record<StepId, Component> = {
   company: StepCompany,
   period: StepPeriod,
   balance: StepBalance,
-  comparatives: StepComparatives,
   pnl: StepProfitLoss,
   chSubmit: StepCompaniesHouse,
   tax: StepTax,
@@ -104,6 +108,7 @@ watch(() => state.submissionId, (id) => {
     </nav>
 
     <main class="wizard-main">
+      <StepProblems v-if="!STEPS_WITHOUT_INLINE_PROBLEMS.has(state.step)" :wizard="wizard" />
       <component :is="stepComponents[state.step]" :wizard="wizard" />
     </main>
   </div>

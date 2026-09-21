@@ -36,7 +36,6 @@ export default defineEventHandler(async (event) => {
     periodEnd: string
     companyAuthCode: string
     email: string
-    gatewayTest: boolean
     accountsIxbrl: string
   }>(event)
   if (!body?.accountsIxbrl || !body?.companyNumber) {
@@ -71,7 +70,9 @@ export default defineEventHandler(async (event) => {
       packageReference: config.companiesHousePackageReference,
       email: body.email
     },
-    gatewayTest: body.gatewayTest,
+    // Server-controlled, not client-supplied — see the
+    // companiesHouseGatewayTest comment in nuxt.config.ts.
+    gatewayTest: config.companiesHouseGatewayTest as boolean,
     companyNumber: body.companyNumber,
     companyName: body.companyName,
     transactionId,

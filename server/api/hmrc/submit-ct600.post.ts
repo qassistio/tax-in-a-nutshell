@@ -1,7 +1,15 @@
-// Proxies a pre-built GovTalk envelope (see app/domain/filing/govTalk.ts)
-// to HMRC's CT submission gateway, and records the resulting submission
-// status against a GUID keyed row in the local SQLite store (see
-// server/utils/db.ts) — status metadata only, no accounting figures.
+// Builds the GovTalk envelope (see app/domain/filing/govTalk.ts) and
+// proxies it to HMRC's CT submission gateway, recording the resulting
+// submission status against a GUID keyed row in the local SQLite store
+// (see server/utils/db.ts) — status metadata only, no accounting figures.
+//
+// The envelope is built here rather than in the browser specifically so
+// the message Class (Test-In-Live vs live — see hmrcTestInLive in
+// nuxt.config.ts) is a server-only decision the filer can't override; the
+// browser only supplies the IRenvelope body content and a pre-computed
+// IRmark (see compute-irmark.post.ts) plus the Government Gateway
+// credentials, which still come from the browser per-request and are
+// never stored.
 //
 // GovTalk is asynchronous: the immediate response is normally an
 // `acknowledgement` carrying a CorrelationID and a poll endpoint, not the
@@ -10,29 +18,50 @@
 // state that first response leaves us in and returns the submission id
 // for the browser to poll against.
 
+import { createHash } from 'node:crypto'
 import { createSubmission, updateSubmission } from '../../utils/db'
-import { parseGovTalkResponse } from '../../../app/domain/filing/govTalk'
+import { buildGovTalkEnvelope, parseGovTalkResponse, type CtMessageClass } from '../../../app/domain/filing/govTalk'
 
 export default defineEventHandler(async (event) => {
   const body = await readBody<{
-    envelopeXml: string
+    bodyXml: string
+    companyUtr: string
     companyName: string
     periodEnd: string
-    messageClass: string
     irMark: string
-    payloadHash: string
+    gatewayUserId: string
+    gatewayPassword: string
+    vendorId: string
   }>(event)
-  if (!body?.envelopeXml) {
-    throw createError({ statusCode: 400, statusMessage: 'Missing envelopeXml' })
+  if (!body?.bodyXml || !body?.companyUtr) {
+    throw createError({ statusCode: 400, statusMessage: 'Missing bodyXml or companyUtr' })
   }
 
   const config = useRuntimeConfig()
+  // Server-controlled, not client-supplied — see the hmrcTestInLive
+  // comment in nuxt.config.ts.
+  const messageClass: CtMessageClass = (config.hmrcTestInLive as boolean) ? 'HMRC-CT-CT600-TIL' : 'HMRC-CT-CT600'
+
+  const envelopeXml = buildGovTalkEnvelope({
+    messageClass,
+    credentials: { gatewayUserId: body.gatewayUserId, gatewayPassword: body.gatewayPassword, vendorId: body.vendorId },
+    companyUtr: body.companyUtr,
+    companyName: body.companyName,
+    periodEnd: body.periodEnd,
+    bodyXml: body.bodyXml,
+    irMark: body.irMark
+  })
+  // SHA-256 of the exact bytes sent — requirements.md §29's "payload
+  // hashes" — computed here now that the envelope itself is assembled
+  // server-side, rather than being handed a pre-computed hash to trust.
+  const payloadHash = createHash('sha256').update(envelopeXml, 'utf8').digest('hex')
+
   const id = crypto.randomUUID()
   await createSubmission({ id, companyName: body.companyName ?? '', periodEnd: body.periodEnd ?? '' })
   await updateSubmission(id, {
-    hmrc_message_class: body.messageClass,
+    hmrc_message_class: messageClass,
     hmrc_irmark: body.irMark,
-    hmrc_payload_hash: body.payloadHash,
+    hmrc_payload_hash: payloadHash,
     hmrc_status: 'validated'
   })
 
@@ -40,7 +69,7 @@ export default defineEventHandler(async (event) => {
     const response = await fetch(config.hmrcGatewayUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/xml; charset=utf-8' },
-      body: body.envelopeXml
+      body: envelopeXml
     })
     const text = await response.text()
     const parsed = parseGovTalkResponse(text)

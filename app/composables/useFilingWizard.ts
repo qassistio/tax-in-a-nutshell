@@ -12,7 +12,7 @@ import { findProblems, findMissingAmountFields, MICRO_ENTITY_TURNOVER_LIMIT, REQ
 import { createAuditEntry, buildTaxableProfitTrail, type AuditEntry, type AuditCategory } from '../domain/audit/auditTrail'
 import { hashArtefacts, createApprovalRecord, isApprovalStale, type ApprovalRecord } from '../domain/filing/approval'
 import type { GatewayReceipt } from '../domain/filing/submissionStatus'
-import { buildIrMarkHashingBody, buildGovTalkEnvelope, parseGovTalkResponse, type CtMessageClass } from '../domain/filing/govTalk'
+import { buildIrMarkHashingBody, parseGovTalkResponse } from '../domain/filing/govTalk'
 import { generateAccountsIxbrl } from '../domain/ixbrl/accountsIxbrl'
 import { generateTaxComputationIxbrl } from '../domain/ixbrl/taxComputationIxbrl'
 import { diffFields, createAmendment, type Amendment } from '../domain/filing/amendments'
@@ -38,7 +38,7 @@ interface SubmissionRowDto {
 }
 
 export type StepId =
-  | 'start' | 'eligibility' | 'company' | 'period' | 'balance' | 'comparatives' | 'pnl' | 'chSubmit' | 'tax'
+  | 'start' | 'eligibility' | 'company' | 'period' | 'balance' | 'pnl' | 'chSubmit' | 'tax'
   | 'notes' | 'review' | 'declaration' | 'receipt'
 
 const STEP_LABELS: Record<StepId, string> = {
@@ -47,7 +47,6 @@ const STEP_LABELS: Record<StepId, string> = {
   company: 'Company',
   period: 'Accounting period',
   balance: 'Balance sheet',
-  comparatives: 'Prior year comparatives',
   pnl: 'Profit and loss',
   chSubmit: 'Companies House',
   tax: 'Tax computation',
@@ -101,16 +100,23 @@ function emptyFields() {
   })
 }
 
-const GUIDED_BALANCE_FIELDS: Array<{ key: keyof ReturnType<typeof emptyFields>; label: string; help: string }> = [
-  { key: 'unpaidCapital', label: 'Called up share capital not paid', help: 'Usually £0 unless shares were issued but not yet paid for.' },
-  { key: 'fixedAssets', label: 'Fixed assets', help: 'Equipment, vehicles, property and other assets kept for continuing use, at net book value.' },
-  { key: 'currentAssets', label: 'Current assets', help: 'Cash, bank balances, stock and amounts owed to the company that will be received within a year.' },
-  { key: 'prepayments', label: 'Prepayments and accrued income', help: 'Amounts paid in advance for goods or services not yet received.' },
-  { key: 'creditorsWithin', label: 'Creditors: amounts falling due within one year', help: 'Trade creditors, tax, VAT and short-term loans due within the next twelve months.' },
-  { key: 'creditorsAfter', label: 'Creditors: amounts falling due after more than one year', help: 'Loans or other amounts not due for repayment within the next twelve months.' },
-  { key: 'provisions', label: 'Provisions for liabilities', help: 'Amounts set aside for liabilities that are likely but not yet certain in amount or timing.' },
-  { key: 'shareCapital', label: 'Called up share capital', help: 'The nominal value of shares issued.' },
-  { key: 'retained', label: 'Profit and loss account / retained earnings', help: 'Accumulated profits or losses carried forward from this and earlier periods.' }
+type FieldKey = keyof ReturnType<typeof emptyFields>
+
+/** The current-year question plus, where one exists, its prior-year
+ *  comparative counterpart (same cmp*-prefixed field the table view binds
+ *  to — see StepBalance.vue) — expanded into the flat, ordered list of
+ *  guided questions by guidedSteps below, asking each line's prior-year
+ *  figure right after its current-year one while it's fresh in mind. */
+const GUIDED_BALANCE_FIELDS: Array<{ key: FieldKey; label: string; help: string; comparativeKey?: FieldKey }> = [
+  { key: 'unpaidCapital', label: 'Called up share capital not paid', help: 'Usually £0 unless shares were issued but not yet paid for.', comparativeKey: 'cmpUnpaidCapital' },
+  { key: 'fixedAssets', label: 'Fixed assets', help: 'Equipment, vehicles, property and other assets kept for continuing use, at net book value.', comparativeKey: 'cmpFixedAssets' },
+  { key: 'currentAssets', label: 'Current assets', help: 'Cash, bank balances, stock and amounts owed to the company that will be received within a year.', comparativeKey: 'cmpCurrentAssets' },
+  { key: 'prepayments', label: 'Prepayments and accrued income', help: 'Amounts paid in advance for goods or services not yet received.', comparativeKey: 'cmpPrepayments' },
+  { key: 'creditorsWithin', label: 'Creditors: amounts falling due within one year', help: 'Trade creditors, tax, VAT and short-term loans due within the next twelve months.', comparativeKey: 'cmpCreditorsWithin' },
+  { key: 'creditorsAfter', label: 'Creditors: amounts falling due after more than one year', help: 'Loans or other amounts not due for repayment within the next twelve months.', comparativeKey: 'cmpCreditorsAfter' },
+  { key: 'provisions', label: 'Provisions for liabilities', help: 'Amounts set aside for liabilities that are likely but not yet certain in amount or timing.', comparativeKey: 'cmpProvisions' },
+  { key: 'shareCapital', label: 'Called up share capital', help: 'The nominal value of shares issued.', comparativeKey: 'cmpShareCapital' },
+  { key: 'retained', label: 'Profit and loss account / retained earnings', help: 'Accumulated profits or losses carried forward from this and earlier periods.', comparativeKey: 'cmpRetained' }
 ]
 
 export function useFilingWizard() {
@@ -128,13 +134,21 @@ export function useFilingWizard() {
     auditLog: [] as AuditEntry[],
     approval: null as ApprovalRecord | null,
     vendorId: '',
-    testInLive: true,
-    // Companies House uses one URL for test and live traffic, chosen via
-    // a <GatewayTest> flag rather than a different message Class the way
-    // HMRC's testInLive above does — see companiesHouseGovTalk.ts.
-    chGatewayTest: true,
+    // Neither HMRC's Test-In-Live/live message Class nor Companies
+    // House's equivalent <GatewayTest> flag is client state — both are
+    // server-only env vars (NUXT_HMRC_TEST_IN_LIVE / hmrcTestInLive,
+    // NUXT_COMPANIES_HOUSE_GATEWAY_TEST / companiesHouseGatewayTest, see
+    // nuxt.config.ts) read directly by submit-ct600.post.ts and
+    // submit-accounts.post.ts/poll-accounts.post.ts respectively.
     hmrcReceipt: null as GatewayReceipt | null,
     chReceipt: null as GatewayReceipt | null,
+    // Steps the filer has already left at least once — StepProblems.vue
+    // only shows "this is blank"-type errors for a step once it's in here,
+    // so a step you've just freshly arrived at (and haven't had a chance
+    // to fill in yet) never greets you with a wall of errors; leaving it
+    // once (forward or back) is what makes its problems "stale" enough to
+    // flag, including on a later revisit.
+    visitedSteps: new Set<StepId>(),
     submitting: false,
     chSubmitting: false,
     submitError: '',
@@ -215,12 +229,14 @@ export function useFilingWizard() {
     // first (there's a dedicated step for it, right after the figures
     // that make them up) and the CT600/tax computation follows — see
     // server/api/companies-house/submit-accounts.post.ts.
-    const steps: StepId[] = ['start', 'eligibility', 'company', 'period', 'balance']
-    // requirements.md §11 — a first accounting period has nothing to
-    // compare to, so the comparatives step only appears once the filer
-    // has said (on the period step) that this isn't their first period.
-    if (f.firstPeriod !== 'yes') steps.push('comparatives')
-    steps.push('pnl')
+    // requirements.md §11 — prior-year comparative figures are entered as
+    // a second column right alongside the current year's, on the balance
+    // sheet and P&L steps themselves (see StepBalance.vue/StepProfitLoss
+    // .vue), rather than as a separate step — that's how accountants
+    // expect to see them, and it's only shown once the filer has said (on
+    // the period step) that this isn't the company's first period, since
+    // a first period has nothing to compare to.
+    const steps: StepId[] = ['start', 'eligibility', 'company', 'period', 'balance', 'pnl']
     if (state.filings.companiesHouse) steps.push('chSubmit')
     if (state.filings.ct600) steps.push('tax')
     steps.push('notes', 'review', 'declaration', 'receipt')
@@ -230,13 +246,17 @@ export function useFilingWizard() {
   const currentIndex = computed(() => order.value.indexOf(state.step))
 
   function go(step: StepId) {
+    state.visitedSteps.add(state.step)
     state.step = step
   }
 
   function move(delta: number) {
     const idx = currentIndex.value + delta
     const next = order.value[idx]
-    if (next) state.step = next
+    if (next) {
+      state.visitedSteps.add(state.step)
+      state.step = next
+    }
   }
 
   const balance = computed(() => balanceSheetTotals({
@@ -258,6 +278,31 @@ export function useFilingWizard() {
     staffCosts: parsePounds(f.staffCosts),
     depreciation: parsePounds(f.depreciation),
     otherCharges: parsePounds(f.otherCharges)
+  }))
+
+  // Prior-year totals for the comparative column on StepBalance.vue/
+  // StepProfitLoss.vue — same shape as balance/pnl above, just fed from
+  // the cmp*-prefixed fields. Not gated on f.firstPeriod here since the
+  // components themselves decide whether to render the column at all.
+  const comparativeBalance = computed(() => balanceSheetTotals({
+    unpaidCapital: parsePounds(f.cmpUnpaidCapital),
+    fixedAssets: parsePounds(f.cmpFixedAssets),
+    currentAssets: parsePounds(f.cmpCurrentAssets),
+    prepayments: parsePounds(f.cmpPrepayments),
+    creditorsWithin: parsePounds(f.cmpCreditorsWithin),
+    creditorsAfter: parsePounds(f.cmpCreditorsAfter),
+    provisions: parsePounds(f.cmpProvisions),
+    shareCapital: parsePounds(f.cmpShareCapital),
+    retained: parsePounds(f.cmpRetained)
+  }))
+
+  const comparativePnl = computed(() => profitAndLossTotals({
+    turnover: parsePounds(f.cmpTurnover),
+    otherIncome: parsePounds(f.cmpOtherIncome),
+    rawMaterials: parsePounds(f.cmpRawMaterials),
+    staffCosts: parsePounds(f.cmpStaffCosts),
+    depreciation: parsePounds(f.cmpDepreciation),
+    otherCharges: parsePounds(f.cmpOtherCharges)
   }))
 
   // --- Eligibility (requirements.md §3.2/§34) ---
@@ -310,12 +355,11 @@ export function useFilingWizard() {
   const problems = computed(() => {
     const applicableSteps = new Set([
       'balance', 'pnl',
-      ...(f.firstPeriod !== 'yes' ? ['comparatives'] : []),
       ...(state.filings.ct600 ? ['tax'] : [])
     ])
     return [
       ...findEligibilityProblems(eligibilityAnswers.value),
-      ...findMissingAmountFields(f, applicableSteps),
+      ...findMissingAmountFields(f, applicableSteps, f.firstPeriod !== 'yes'),
       ...findProblems({
         balance: balance.value,
         utr: f.utr,
@@ -347,7 +391,9 @@ export function useFilingWizard() {
    *  buttons within the guided flow itself. */
   function stepOwnFieldsFilled(step: StepId): boolean {
     const amountFieldsFor = (s: string) =>
-      REQUIRED_AMOUNT_FIELDS.filter(x => x.step === s).every(x => String((f as Record<string, string>)[x.key] ?? '').trim())
+      REQUIRED_AMOUNT_FIELDS
+        .filter(x => x.step === s && (!x.comparative || f.firstPeriod !== 'yes'))
+        .every(x => String((f as Record<string, string>)[x.key] ?? '').trim())
     switch (step) {
       case 'start': return true
       // "Own fields filled" means every question answered, not that the
@@ -358,7 +404,6 @@ export function useFilingWizard() {
       case 'company': return !!(f.companyName.trim() && f.companyNumber.trim() && f.utr.trim())
       case 'period': return !!(f.periodStart && f.periodEnd)
       case 'balance': return amountFieldsFor('balance')
-      case 'comparatives': return f.firstPeriod === 'yes' || amountFieldsFor('comparatives')
       case 'pnl': return amountFieldsFor('pnl')
       case 'chSubmit': return true
       case 'tax': return amountFieldsFor('tax')
@@ -387,6 +432,20 @@ export function useFilingWizard() {
   }
 
   const canSubmit = computed(() => problems.value.every(p => p.sev !== 'error') && state.declarationAgreed)
+
+  /** Whether the Continue button on the *current* step should be enabled.
+   *  Same "own required fields answered" rule stepOwnFieldsFilled uses to
+   *  gate the step nav, except chSubmit — its own fields are trivially
+   *  "filled" (there's nothing to type, see stepOwnFieldsFilled's
+   *  'chSubmit' case), but the whole point of that step is to actually
+   *  submit to Companies House before moving on, so Continue there stays
+   *  disabled until a non-rejected chReceipt exists. StepCompaniesHouse.vue
+   *  uses this to swap its own Continue button out for the submit action
+   *  until that's true. */
+  const canContinue = computed(() => {
+    if (state.step === 'chSubmit') return !!state.chReceipt && state.chReceipt.status !== 'rejected'
+    return stepOwnFieldsFilled(state.step)
+  })
 
   // --- Audit trail ---
   const figureTrail = computed(() => buildTaxableProfitTrail({
@@ -527,7 +586,6 @@ export function useFilingWizard() {
     state.submitting = true
     state.submitError = ''
     try {
-      const messageClass: CtMessageClass = state.testInLive ? 'HMRC-CT-CT600-TIL' : 'HMRC-CT-CT600'
       const bodyXml = `<CompanyTaxReturn><TaxComputation><![CDATA[${taxComputationIxbrl.value}]]></TaxComputation></CompanyTaxReturn>`
       // IRmark is computed over the real <Body> content (empty IRmark, see
       // buildIrMarkHashingBody) using real W3C Exclusive C14N — done
@@ -540,22 +598,23 @@ export function useFilingWizard() {
         method: 'POST',
         body: { bodyXml: hashingBody }
       })
-      const envelopeXml = buildGovTalkEnvelope({
-        messageClass,
-        credentials: { gatewayUserId: f.gwUser, gatewayPassword: f.gwPass, vendorId: state.vendorId },
-        companyUtr: f.utr, companyName: f.companyName, periodEnd: f.periodEnd,
-        bodyXml, irMark
-      })
-      const payloadHash = await hashArtefacts({ envelopeXml })
 
+      // The envelope itself — including which message Class it carries,
+      // Test-In-Live or live — is built server-side now, not here, so
+      // that choice can't be made or overridden in the browser. See the
+      // comment atop submit-ct600.post.ts and hmrcTestInLive in
+      // nuxt.config.ts.
       const res = await $fetch<{ id: string }>('/api/hmrc/submit-ct600', {
         method: 'POST',
-        body: { envelopeXml, companyName: f.companyName, periodEnd: f.periodEnd, messageClass, irMark, payloadHash }
+        body: {
+          bodyXml, companyUtr: f.utr, companyName: f.companyName, periodEnd: f.periodEnd, irMark,
+          gatewayUserId: f.gwUser, gatewayPassword: f.gwPass, vendorId: state.vendorId
+        }
       })
 
       const status = await $fetch<{ row: SubmissionRowDto }>(`/api/submissions/${res.id}`)
       applySubmissionRow(status.row)
-      logEvent('submission', `Submitted to HMRC gateway (${messageClass}) — status: ${status.row.hmrc_status}.`)
+      logEvent('submission', `Submitted to HMRC gateway — status: ${status.row.hmrc_status}.`)
     } catch (err) {
       state.submitError = (err as Error).message || 'Could not reach the HMRC gateway.'
       state.hmrcReceipt = { target: 'hmrc', status: 'rejected', timestamp: new Date().toISOString(), message: state.submitError }
@@ -585,14 +644,13 @@ export function useFilingWizard() {
           periodEnd: f.periodEnd,
           companyAuthCode: f.chCompanyAuthCode,
           email: f.chEmail,
-          gatewayTest: state.chGatewayTest,
           accountsIxbrl: accountsIxbrl.value
         }
       })
 
       const status = await $fetch<{ row: SubmissionRowDto }>(`/api/submissions/${res.id}`)
       applySubmissionRow(status.row)
-      logEvent('submission', `Submitted to Companies House XML Gateway (Class AA, ${state.chGatewayTest ? 'test' : 'live'}) — status: ${status.row.ch_status}.`)
+      logEvent('submission', `Submitted to Companies House XML Gateway (Class AA) — status: ${status.row.ch_status}.`)
     } catch (err) {
       state.chReceipt = { target: 'companiesHouse', status: 'rejected', timestamp: new Date().toISOString(), message: (err as Error).message }
       logEvent('submission', `Companies House submission failed: ${(err as Error).message}`)
@@ -628,15 +686,30 @@ export function useFilingWizard() {
     if (!state.submissionId) return
     const res = await $fetch<{ row: SubmissionRowDto }>('/api/companies-house/poll-accounts', {
       method: 'POST',
-      body: { id: state.submissionId, email: f.chEmail, gatewayTest: state.chGatewayTest }
+      body: { id: state.submissionId, email: f.chEmail }
     })
     applySubmissionRow(res.row)
   }
 
   // --- Guided balance-sheet entry ---
-  const guidedField = computed(() => GUIDED_BALANCE_FIELDS[state.guidedIdx] ?? GUIDED_BALANCE_FIELDS[0]!)
-  const guidedTotal = GUIDED_BALANCE_FIELDS.length
-  function guidedNext() { if (state.guidedIdx < guidedTotal - 1) state.guidedIdx++ }
+  // Flattens GUIDED_BALANCE_FIELDS into the actual question sequence —
+  // each line's current-year question, immediately followed by its
+  // prior-year comparative question, but only once firstPeriod says
+  // there is a prior year to ask about (same gate as the table view's
+  // second column).
+  const guidedSteps = computed(() => {
+    const steps: Array<{ key: FieldKey; label: string; help: string; isComparative: boolean }> = []
+    for (const field of GUIDED_BALANCE_FIELDS) {
+      steps.push({ key: field.key, label: field.label, help: field.help, isComparative: false })
+      if (field.comparativeKey && f.firstPeriod !== 'yes') {
+        steps.push({ key: field.comparativeKey, label: field.label, help: field.help, isComparative: true })
+      }
+    }
+    return steps
+  })
+  const guidedField = computed(() => guidedSteps.value[state.guidedIdx] ?? guidedSteps.value[0]!)
+  const guidedTotal = computed(() => guidedSteps.value.length)
+  function guidedNext() { if (state.guidedIdx < guidedTotal.value - 1) state.guidedIdx++ }
   function guidedBack() { if (state.guidedIdx > 0) state.guidedIdx-- }
 
   // --- Trial balance import ---
@@ -672,13 +745,13 @@ export function useFilingWizard() {
     state, f,
     order, currentIndex, go, move, stepStatus, isStepUnlocked,
     STEP_LABELS,
-    balance, pnl, taxableTotalProfits, rates, corporationTax, deadlines,
+    balance, pnl, comparativeBalance, comparativePnl, taxableTotalProfits, rates, corporationTax, deadlines,
     eligibilityAnswers,
     capitalAllowanceRates, capitalAllowances,
     lossRelief,
     directorLoanRates, directorLoanAssessment, totalTaxPayable,
     comparativePeriod,
-    problems, errorSteps, warnSteps, canSubmit,
+    problems, errorSteps, warnSteps, canSubmit, canContinue,
     GUIDED_BALANCE_FIELDS, guidedField, guidedTotal, guidedNext, guidedBack,
     importOpenDialog, importClose, importFile, importApply,
     formatPounds,

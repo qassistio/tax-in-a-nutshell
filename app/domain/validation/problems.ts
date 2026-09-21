@@ -102,8 +102,16 @@ export const MICRO_ENTITY_EMPLOYEE_LIMIT = 10
 /** Every monetary line on the balance sheet, profit and loss account and
  *  tax computation. A blank box is never treated as £0 — nil is a figure
  *  the preparer has to enter deliberately, same as on the real forms,
- *  so a line left blank is an error rather than a silent assumption. */
-export const REQUIRED_AMOUNT_FIELDS: Array<{ key: string; label: string; step: string }> = [
+ *  so a line left blank is an error rather than a silent assumption.
+ *
+ *  Prior-year comparative figures (requirements.md §11) sit alongside
+ *  their current-year counterpart — same `step` as the line they compare
+ *  against, since both columns are entered on the same balance
+ *  sheet/P&L screen (an accountant expects a two-column table, not a
+ *  separate screen) — flagged `comparative: true` so
+ *  findMissingAmountFields can skip them for a first accounting period,
+ *  which has nothing to compare to. */
+export const REQUIRED_AMOUNT_FIELDS: Array<{ key: string; label: string; step: string; comparative?: boolean }> = [
   { key: 'unpaidCapital', label: 'Called up share capital not paid', step: 'balance' },
   { key: 'fixedAssets', label: 'Fixed assets', step: 'balance' },
   { key: 'currentAssets', label: 'Current assets', step: 'balance' },
@@ -126,31 +134,30 @@ export const REQUIRED_AMOUNT_FIELDS: Array<{ key: string; label: string; step: s
   { key: 'caDisposals', label: 'Capital allowances: disposal proceeds', step: 'tax' },
   { key: 'lossesBroughtForward', label: 'Trading losses brought forward', step: 'tax' },
   { key: 'directorLoanBalance', label: 'Director loan account balance at period end', step: 'tax' },
-  // requirements.md §11 — only required for a second-or-later accounting
-  // period; the wizard only marks 'comparatives' applicable when
-  // f.firstPeriod !== 'yes' (see useFilingWizard.ts).
-  { key: 'cmpUnpaidCapital', label: 'Prior year: called up share capital not paid', step: 'comparatives' },
-  { key: 'cmpFixedAssets', label: 'Prior year: fixed assets', step: 'comparatives' },
-  { key: 'cmpCurrentAssets', label: 'Prior year: current assets', step: 'comparatives' },
-  { key: 'cmpPrepayments', label: 'Prior year: prepayments and accrued income', step: 'comparatives' },
-  { key: 'cmpCreditorsWithin', label: 'Prior year: creditors due within one year', step: 'comparatives' },
-  { key: 'cmpCreditorsAfter', label: 'Prior year: creditors due after more than one year', step: 'comparatives' },
-  { key: 'cmpProvisions', label: 'Prior year: provisions for liabilities', step: 'comparatives' },
-  { key: 'cmpShareCapital', label: 'Prior year: called up share capital', step: 'comparatives' },
-  { key: 'cmpRetained', label: 'Prior year: profit and loss account', step: 'comparatives' },
-  { key: 'cmpTurnover', label: 'Prior year: turnover', step: 'comparatives' },
-  { key: 'cmpOtherIncome', label: 'Prior year: other income', step: 'comparatives' },
-  { key: 'cmpRawMaterials', label: 'Prior year: cost of raw materials and consumables', step: 'comparatives' },
-  { key: 'cmpStaffCosts', label: 'Prior year: staff costs', step: 'comparatives' },
-  { key: 'cmpDepreciation', label: 'Prior year: depreciation and other amounts written off assets', step: 'comparatives' },
-  { key: 'cmpOtherCharges', label: 'Prior year: other charges', step: 'comparatives' }
+  { key: 'cmpUnpaidCapital', label: 'Prior year: called up share capital not paid', step: 'balance', comparative: true },
+  { key: 'cmpFixedAssets', label: 'Prior year: fixed assets', step: 'balance', comparative: true },
+  { key: 'cmpCurrentAssets', label: 'Prior year: current assets', step: 'balance', comparative: true },
+  { key: 'cmpPrepayments', label: 'Prior year: prepayments and accrued income', step: 'balance', comparative: true },
+  { key: 'cmpCreditorsWithin', label: 'Prior year: creditors due within one year', step: 'balance', comparative: true },
+  { key: 'cmpCreditorsAfter', label: 'Prior year: creditors due after more than one year', step: 'balance', comparative: true },
+  { key: 'cmpProvisions', label: 'Prior year: provisions for liabilities', step: 'balance', comparative: true },
+  { key: 'cmpShareCapital', label: 'Prior year: called up share capital', step: 'balance', comparative: true },
+  { key: 'cmpRetained', label: 'Prior year: profit and loss account', step: 'balance', comparative: true },
+  { key: 'cmpTurnover', label: 'Prior year: turnover', step: 'pnl', comparative: true },
+  { key: 'cmpOtherIncome', label: 'Prior year: other income', step: 'pnl', comparative: true },
+  { key: 'cmpRawMaterials', label: 'Prior year: cost of raw materials and consumables', step: 'pnl', comparative: true },
+  { key: 'cmpStaffCosts', label: 'Prior year: staff costs', step: 'pnl', comparative: true },
+  { key: 'cmpDepreciation', label: 'Prior year: depreciation and other amounts written off assets', step: 'pnl', comparative: true },
+  { key: 'cmpOtherCharges', label: 'Prior year: other charges', step: 'pnl', comparative: true }
 ]
 
 /** Flags every required amount field left blank. Zero is a perfectly
- *  valid answer — it just has to be typed, not inferred. */
-export function findMissingAmountFields(fields: Record<string, string | undefined>, applicableSteps: Set<string>): FilingProblem[] {
+ *  valid answer — it just has to be typed, not inferred.
+ *  `includeComparatives` should be false for a first accounting period —
+ *  see the REQUIRED_AMOUNT_FIELDS comment above. */
+export function findMissingAmountFields(fields: Record<string, string | undefined>, applicableSteps: Set<string>, includeComparatives = true): FilingProblem[] {
   return REQUIRED_AMOUNT_FIELDS
-    .filter(f => applicableSteps.has(f.step) && !String(fields[f.key] ?? '').trim())
+    .filter(f => applicableSteps.has(f.step) && (!f.comparative || includeComparatives) && !String(fields[f.key] ?? '').trim())
     .map(f => ({
       id: `missing-amount-${f.key}`,
       sev: 'error' as const,

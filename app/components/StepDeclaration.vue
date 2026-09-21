@@ -51,18 +51,9 @@ async function submit() {
       <label for="vendorId">HMRC vendor ID</label>
       <input id="vendorId" v-model="state.vendorId" class="input" autocomplete="off">
     </div>
-    <div class="field">
-      <label for="testInLive">Submission mode</label>
-      <select id="testInLive" v-model="state.testInLive" class="input">
-        <option :value="true">Test-in-live (HMRC-CT-CT600-TIL)</option>
-        <option :value="false">Live (HMRC-CT-CT600)</option>
-      </select>
-    </div>
   </div>
   <p class="text-muted" style="font-size:13px;">
-    This calls HMRC's real GovTalk submission gateway with the envelope built in this browser. It has not been
-    verified end-to-end against a live Government Gateway account — leave submission mode on Test-in-live until
-    you've checked a real response.
+    This sends your return to HMRC's online filing service.
   </p>
 
   <label class="radio" style="margin-top: var(--space-4);">

@@ -25,6 +25,15 @@ export default defineNuxtConfig({
   runtimeConfig: {
     hmrcVendorId: '',
     hmrcGatewayUrl: 'https://transaction-engine.tax.service.gov.uk/submission',
+    // Whether CT600 submissions use HMRC's Test-In-Live message class
+    // (HMRC-CT-CT600-TIL) or the real live one (HMRC-CT-CT600) —
+    // deliberately a server-only switch (NUXT_HMRC_TEST_IN_LIVE), not a
+    // filer-facing dropdown, same reasoning and default ('true') as
+    // companiesHouseGatewayTest below. See submit-ct600.post.ts, the only
+    // place that reads it — the envelope (and this Class element) is now
+    // built there rather than in the browser, so the choice can't be
+    // overridden client-side.
+    hmrcTestInLive: true,
     // Companies House XML Gateway — same URL for test and live traffic;
     // see app/domain/filing/companiesHouseGovTalk.ts for how the two are
     // distinguished (a <GatewayTest> flag, not a different URL or Class).
@@ -40,6 +49,16 @@ export default defineNuxtConfig({
     companiesHousePresenterId: '',
     companiesHousePresenterAuthCode: '',
     companiesHousePackageReference: '',
+    // Whether submissions carry the XML Gateway's <GatewayTest> flag —
+    // deliberately a server-only switch (NUXT_COMPANIES_HOUSE_GATEWAY_TEST),
+    // not a filer-facing dropdown: which presenter credentials are
+    // configured above already determines whether this software is even
+    // registered for live filing, so the safe default is 'true' and an
+    // operator has to deliberately flip it in the deployment's own env
+    // vars to go live, rather than a filer being able to pick "Live" by
+    // mistake in the browser. See submit-accounts.post.ts/
+    // poll-accounts.post.ts, the only places that read it.
+    companiesHouseGatewayTest: true,
     // Companies House's separate Public Data API (api.company-information
     // .service.gov.uk) — a free, read-only REST API for looking up public
     // company records, entirely distinct from the XML Gateway above (its

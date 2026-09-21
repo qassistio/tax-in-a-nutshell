@@ -31,7 +31,6 @@ export default defineEventHandler(async (event) => {
   const body = await readBody<{
     id: string
     email: string
-    gatewayTest: boolean
   }>(event)
   if (!body?.id) {
     throw createError({ statusCode: 400, statusMessage: 'Missing id' })
@@ -55,7 +54,9 @@ export default defineEventHandler(async (event) => {
 
   const envelopeXml = buildCompaniesHouseStatusPollEnvelope({
     credentials: { email: body.email },
-    gatewayTest: body.gatewayTest,
+    // Server-controlled, not client-supplied — see the
+    // companiesHouseGatewayTest comment in nuxt.config.ts.
+    gatewayTest: config.companiesHouseGatewayTest as boolean,
     transactionId,
     submissionNumber: row.ch_submission_number,
     senderIdHash, authValueHash
